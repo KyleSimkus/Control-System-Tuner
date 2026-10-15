@@ -477,8 +477,8 @@ input[type="range"].fader::-moz-range-thumb {
 
 <script>
 // ============================================================================
-// Control System Tuner — simulation core (shared by the game page and the
-// offline calibration scripts). Pure functions, no DOM.
+// Control System Tuner — simulation core: plant models, PID controller,
+// pass/fail envelope, scoring and coaching. Pure functions, no DOM.
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -922,7 +922,7 @@ const LEVELS = [
     plantKey: 'maglev',
     story: "Float a steel ball under an electromagnet and move it between heights. The closer it gets, the harder the magnet pulls, so left alone it falls or snaps up.",
     tip: "P must be strong enough to beat the runaway, and D must damp the bounce. This ball is a little heavier than the magnet expects, so I matters too.",
-    fieldNote: "Static magnets alone can't hold an object in stable levitation (Earnshaw's theorem), which is why maglev needs active feedback.",
+    fieldNote: "A steel ball can't float stably under fixed magnets alone (Earnshaw's theorem), which is why maglev needs active feedback.",
     transferFunction: "G(s) = 9000 / ((s² − 196)·(0.01s + 1))",
     starCriteria: [{ metric: 'iae', limit: 1.0 }, { metric: 'overshoot', limit: 0.1 }],
     durationSeconds: 3.8, timeStepSeconds: 0.0005,
@@ -943,7 +943,6 @@ const LEVELS = [
 // Slider <-> gain mapping. Position 0 is "off"; 1..SLIDER_STEPS is log-spaced.
 // ---------------------------------------------------------------------------
 const SLIDER_STEPS = 1000;
-const ANTI_WINDUP_MODE = 'conditional'; // integral pauses while the actuator is pinned
 function gainFromSliderPosition(position, range) {
   if (position <= 0) return 0;
   const fraction = (position - 1) / (SLIDER_STEPS - 1);
@@ -996,7 +995,7 @@ function disturbanceAt(level, timeSeconds) {
 // Closed-loop simulation
 // PID (parallel form):  u = P + I + D
 //   P = Kp * error
-//   I = actuatorInitial + Ki * integral(error)   (clamped to the actuator range)
+//   I = actuatorInitial + Ki * integral(error)   (paused while the actuator is saturated)
 //   D = -Kd * d(filtered measurement)/dt         (derivative on measurement: no kick)
 // The plant is integrated with RK4; the actuator is held constant over each step.
 // ---------------------------------------------------------------------------
@@ -1062,15 +1061,11 @@ function simulate(level, gains) {
     result.controllerSum[sampleIndex] = controllerSum;
     result.actuator[sampleIndex] = appliedActuator;
 
-    if (gains.I > 0) {
-      if (ANTI_WINDUP_MODE === 'conditional') {
-        const windingUpHigh = controllerSum > level.actuatorMaximum && error > 0;
-        const windingUpLow = controllerSum < level.actuatorMinimum && error < 0;
-        if (!windingUpHigh && !windingUpLow) integralTerm += gains.I * error * timeStep;
-      } else {
-        integralTerm = Math.min(level.actuatorMaximum, Math.max(level.actuatorMinimum, integralTerm + gains.I * error * timeStep));
-      }
-    }
+    // Anti-windup: stop integrating while the actuator is saturated and the
+    // error would push it further past its limit.
+    const windingUpHigh = controllerSum > level.actuatorMaximum && error > 0;
+    const windingUpLow = controllerSum < level.actuatorMinimum && error < 0;
+    if (gains.I > 0 && !windingUpHigh && !windingUpLow) integralTerm += gains.I * error * timeStep;
 
     // Dead time: the plant sees the command from deadTimeSteps samples ago.
     let actuatorAtPlant = appliedActuator;
@@ -1259,11 +1254,11 @@ function evaluateRun(level, run, envelope) {
 // Star criteria: each level names two metrics; every one met adds a star.
 // ---------------------------------------------------------------------------
 const STAR_METRICS = {
-  iae: { label: 'Tracking error', read: (evaluation) => evaluation.integratedAbsoluteError, unitSuffix: (level) => `${level.outputUnit === '°' ? '°' : ' ' + level.outputUnit}·s` },
-  overshoot: { label: 'Overshoot', read: (evaluation) => evaluation.overshootAmount, unitSuffix: (level) => level.outputUnit === '°' ? '°' : ' ' + level.outputUnit },
-  settle: { label: 'Settling time', read: (evaluation) => evaluation.settleSeconds === null ? Infinity : evaluation.settleSeconds, unitSuffix: () => ' s' },
-  travel: { label: 'Actuator travel', read: (evaluation) => evaluation.actuatorTravelPercent, unitSuffix: () => ' %' },
-  rms: { label: 'Motor effort (RMS)', read: (evaluation) => evaluation.actuatorRmsPercent, unitSuffix: () => ' %' },
+  iae: { label: 'Tracking error', read: (evaluation) => evaluation.integratedAbsoluteError },
+  overshoot: { label: 'Overshoot', read: (evaluation) => evaluation.overshootAmount },
+  settle: { label: 'Settling time', read: (evaluation) => evaluation.settleSeconds === null ? Infinity : evaluation.settleSeconds },
+  travel: { label: 'Actuator travel', read: (evaluation) => evaluation.actuatorTravelPercent },
+  rms: { label: 'Motor effort (RMS)', read: (evaluation) => evaluation.actuatorRmsPercent },
 };
 function scoreStars(level, evaluation) {
   if (!evaluation.passed) return { stars: 0, criteria: level.starCriteria.map((criterion) => ({ ...criterion, value: STAR_METRICS[criterion.metric].read(evaluation), met: false })) };
@@ -1484,6 +1479,8 @@ function diagnoseRun(level, run, envelope, evaluation, gains) {
   // Interface parameters
   // ---------------------------------------------------------------------------
   const STORAGE_KEY = 'control-system-tuner.v1';
+  const MAXIMUM_STARS_PER_LEVEL = 3;
+  const MAXIMUM_SAVED_ATTEMPTS = 1000000;
   const RUN_ANIMATION_MILLISECONDS = 2600;
   const RESULT_DELAY_MILLISECONDS = 260;
   const NUDGE_STEP_POSITIONS = 5;
@@ -1519,7 +1516,37 @@ function diagnoseRun(level, run, envelope, evaluation, gains) {
       return {};
     }
   }
-  const progress = Object.assign({ bestStars: {}, sliderPositions: {}, attempts: {} }, loadProgress());
+  // Browser storage can be written by any page on the same site, so saved progress
+  // is treated as untrusted: only known levels and in-range whole numbers are kept.
+  function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+  function cleanSliderPositions(storedPositions) {
+    if (!isPlainObject(storedPositions)) return null;
+    const cleanPositions = {};
+    for (const term of TERM_KEYS) {
+      const position = storedPositions[term];
+      if (Number.isFinite(position)) cleanPositions[term] = Math.max(0, Math.min(SLIDER_STEPS, Math.round(position)));
+    }
+    return cleanPositions;
+  }
+  function cleanProgress(storedProgress) {
+    const clean = { bestStars: {}, sliderPositions: {}, attempts: {} };
+    if (!isPlainObject(storedProgress)) return clean;
+    const storedBestStars = isPlainObject(storedProgress.bestStars) ? storedProgress.bestStars : {};
+    const storedSliderPositions = isPlainObject(storedProgress.sliderPositions) ? storedProgress.sliderPositions : {};
+    const storedAttempts = isPlainObject(storedProgress.attempts) ? storedProgress.attempts : {};
+    for (const level of LEVELS) {
+      const stars = storedBestStars[level.id];
+      if (Number.isInteger(stars) && stars >= 1 && stars <= MAXIMUM_STARS_PER_LEVEL) clean.bestStars[level.id] = stars;
+      const positions = cleanSliderPositions(storedSliderPositions[level.id]);
+      if (positions) clean.sliderPositions[level.id] = positions;
+      const attempts = storedAttempts[level.id];
+      if (Number.isInteger(attempts) && attempts >= 0 && attempts <= MAXIMUM_SAVED_ATTEMPTS) clean.attempts[level.id] = attempts;
+    }
+    return clean;
+  }
+  const progress = cleanProgress(loadProgress());
   function saveProgress() {
     try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)); } catch (error) { /* storage unavailable */ }
   }
@@ -1532,9 +1559,8 @@ function diagnoseRun(level, run, envelope, evaluation, gains) {
     levelIndex: 0,
     sliderPositions: { P: 0, I: 0, D: 0 },
     visibleTerms: { P: true, I: true, D: true, S: true },
-    timeAxis: null,
-    goalTrace: null,
     envelope: null,
+    envelopeSource: null,
     run: null,
     previousRun: null,
     animation: null,
@@ -1604,7 +1630,7 @@ function diagnoseRun(level, run, envelope, evaluation, gains) {
     }
     if (metric === 'overshoot') {
       const span = Math.abs(level.outputRange[1] - level.outputRange[0]);
-      const decimals = span <= 10 ? 2 : span <= 100 ? 1 : 1;
+      const decimals = span <= 10 ? 2 : 1;
       return withUnit(value.toFixed(value < 0.1 ? 2 : decimals), level.outputUnit);
     }
     if (metric === 'settle') return `${value.toFixed(1)} s`;
@@ -2675,7 +2701,8 @@ function diagnoseRun(level, run, envelope, evaluation, gains) {
     refreshPalette();
     const data = restored || {};
     if (data.screen === 'play' && Number.isInteger(data.levelIndex) && LEVELS[data.levelIndex]) {
-      if (data.sliderPositions) progress.sliderPositions[LEVELS[data.levelIndex].id] = data.sliderPositions;
+      const restoredPositions = cleanSliderPositions(data.sliderPositions);
+      if (restoredPositions) progress.sliderPositions[LEVELS[data.levelIndex].id] = restoredPositions;
       renderLevelList();
       openLevel(data.levelIndex, false);
     } else {
