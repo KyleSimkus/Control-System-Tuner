@@ -1,0 +1,2694 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A browser game about tuning PID controllers. Set P, I and D, run the plant, and keep the response inside the spec channel. Nine levels from a robot arm to a maglev.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Control System Tuner">
+<meta property="og:description" content="A browser game about tuning PID controllers. Set P, I and D, run the plant, and keep the response inside the spec channel. Nine levels from a robot arm to a maglev.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2317202A'/%3E%3Cpath d='M5 24H11V9H27' fill='none' stroke='%23FBFCF9' stroke-width='2' stroke-dasharray='3 2.5'/%3E%3Cpath d='M5 24H11C13 11 16 6.5 20 8.2S24 9.6 27 9' fill='none' stroke='%238AABFF' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Control System Tuner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=B612+Mono:wght@400;700&family=Instrument+Sans:wght@400;500;600;700&family=Michroma&display=swap">
+<style>
+/* Layout: a one-screen bench instrument. Chart-recorder paper on top, three gain faders below, the Run key in thumb reach. */
+:root {
+  --bg: #E5EAE7;
+  --surface: #F2F5F2;
+  --paper: #FBFCF9;
+  --grid-minor: #E3EBE5;
+  --grid-major: #C9D8CF;
+  --ink: #17202A;
+  --ink-soft: #4A5A56;
+  --ink-faint: #7B8A86;
+  --rule: #CBD6D0;
+  --pen: #2347C6;
+  --ghost: #9FAED3;
+  --wall-line: #A7B8B0;
+  --wall-fill: #EDF1EE;
+  --fail: #C9382B;
+  --pass: #157A46;
+  --term-p: #0C7877;
+  --term-i: #7A3DBF;
+  --term-d: #B06F08;
+  --star: #D7980A;
+  --shadow: 0 1px 0 rgba(23, 32, 42, 0.04), 0 8px 24px rgba(23, 32, 42, 0.10);
+  --font-display: "Michroma", "Eurostile", "Arial Black", system-ui, sans-serif;
+  --font-body: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "B612 Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1417; --surface: #141C20; --paper: #172126; --grid-minor: #1C292E; --grid-major: #2A3D45;
+    --ink: #E3ECE7; --ink-soft: #A3B3AE; --ink-faint: #71827D; --rule: #283539; --pen: #8AABFF; --ghost: #48598A;
+    --wall-line: #3D5057; --wall-fill: #121A1E; --fail: #FF6F5F; --pass: #4CC489; --term-p: #3BC7C1;
+    --term-i: #B993FF; --term-d: #F0B24A; --star: #F4C24D;
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1417; --surface: #141C20; --paper: #172126; --grid-minor: #1C292E; --grid-major: #2A3D45;
+  --ink: #E3ECE7; --ink-soft: #A3B3AE; --ink-faint: #71827D; --rule: #283539; --pen: #8AABFF; --ghost: #48598A;
+  --wall-line: #3D5057; --wall-fill: #121A1E; --fail: #FF6F5F; --pass: #4CC489; --term-p: #3BC7C1;
+  --term-i: #B993FF; --term-d: #F0B24A; --star: #F4C24D;
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; }
+.mono { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+.screen { height: 100%; }
+.page-gutter {
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* ---------- Level select ---------- */
+.levels-screen { overflow-y: auto; }
+.levels-inner { max-width: 640px; margin: 0 auto; padding-block: 22px 40px; display: grid; gap: 26px; }
+.masthead { display: grid; gap: 10px; }
+.masthead-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.wordmark {
+  font-family: var(--font-display);
+  font-size: clamp(20px, 6vw, 28px);
+  line-height: 1.12;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin: 0;
+  text-wrap: balance;
+}
+.wordmark span { display: block; color: var(--pen); }
+.star-total {
+  flex: none;
+  font-family: var(--font-data);
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  white-space: nowrap;
+}
+.star-total b { color: var(--star); font-weight: 700; }
+.masthead p { margin: 0; color: var(--ink-soft); max-width: 46ch; }
+.how { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--ink-soft); }
+.how span { display: inline-flex; align-items: center; gap: 6px; }
+.how i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--pen); }
+.how i.goal { border-top: 2px dashed var(--ink); }
+.how i.wall { height: 10px; border: 1px solid var(--wall-line); background: repeating-linear-gradient(135deg, var(--wall-line) 0 1px, transparent 1px 4px); }
+
+.chapter { display: grid; gap: 10px; }
+.chapter-head { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--rule); padding-bottom: 6px; }
+.chapter-head h2 { margin: 0; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; }
+.chapter-head p { margin: 0; font-size: 13px; color: var(--ink-faint); }
+.level-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.level-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 88px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.level-row:hover { border-color: var(--ink-faint); }
+.level-row .numeral { font-family: var(--font-display); font-size: 18px; color: var(--ink-faint); }
+.level-row[data-stars="3"] .numeral { color: var(--pass); }
+.level-row .level-text { min-width: 0; display: grid; gap: 1px; }
+.level-row .level-name { font-weight: 600; font-size: 16px; }
+.level-row .level-tag { font-size: 12.5px; color: var(--ink-soft); }
+.level-row .level-side { display: grid; justify-items: end; gap: 4px; }
+.level-row canvas { width: 88px; height: 30px; display: block; }
+.mini-stars { font-size: 12px; letter-spacing: 2px; color: var(--rule); line-height: 1; }
+.mini-stars .on { color: var(--star); }
+.levels-foot { font-size: 12.5px; color: var(--ink-faint); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.text-button { background: none; border: none; padding: 0; color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-size: 12.5px; }
+
+/* ---------- Play screen ---------- */
+.play-screen { position: relative; display: flex; flex-direction: column; min-height: 100%; height: 100%; overflow: hidden; }
+.play-header {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding-block: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+.icon-button {
+  height: 36px; min-width: 36px; padding: 0 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; cursor: pointer; font-size: 14px;
+}
+.icon-button svg { width: 16px; height: 16px; }
+.play-title { min-width: 0; display: flex; align-items: baseline; gap: 8px; justify-content: center; }
+.play-title .numeral { font-family: var(--font-display); font-size: 14px; color: var(--ink-faint); }
+.play-title .name { font-weight: 700; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.play-title .best { font-size: 12px; letter-spacing: 1px; color: var(--rule); white-space: nowrap; }
+.play-title .best .on { color: var(--star); }
+
+.play-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.scope { flex: 1 1 auto; min-height: 250px; display: flex; flex-direction: column; padding-block: 8px 0; }
+.readout {
+  flex: none;
+  min-height: 34px;
+  display: grid;
+  gap: 1px;
+  font-family: var(--font-data);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.readout .line { display: flex; gap: 10px; flex-wrap: wrap; white-space: nowrap; }
+.readout b { font-weight: 400; color: var(--ink); }
+.readout .key-p { color: var(--term-p); } .readout .key-i { color: var(--term-i); } .readout .key-d { color: var(--term-d); }
+.readout .key-pen { color: var(--pen); } .readout .key-sum { color: var(--ink); font-weight: 700; }
+.readout .hint { color: var(--ink-faint); font-family: var(--font-body); font-size: 12.5px; }
+.chart-frame { position: relative; flex: 1 1 auto; min-height: 200px; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: var(--paper); }
+.chart-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-y; cursor: crosshair; }
+.legend { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-block: 6px 2px; font-size: 12px; color: var(--ink-soft); }
+.legend-key { display: flex; gap: 10px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.legend-key span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.legend-key i { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--pen); }
+.legend-key i.goal { border-top: 2px dashed var(--ink); }
+.legend-key i.ghost { border-top: 2px solid var(--ghost); }
+.legend-toggles { display: flex; gap: 4px; flex: none; }
+.chip {
+  font-family: var(--font-data);
+  font-size: 12px;
+  min-width: 30px; height: 26px; padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.chip[aria-pressed="true"] { color: var(--paper); border-color: transparent; }
+.chip[data-term="P"][aria-pressed="true"] { background: var(--term-p); }
+.chip[data-term="I"][aria-pressed="true"] { background: var(--term-i); }
+.chip[data-term="D"][aria-pressed="true"] { background: var(--term-d); }
+.chip[data-term="S"][aria-pressed="true"] { background: var(--ink); }
+
+.console { flex: none; display: grid; gap: 6px; padding-block: 6px 12px; position: relative; }
+.gain-row { display: grid; gap: 2px; }
+.gain-row-head { display: flex; align-items: center; gap: 8px; }
+.term-badge {
+  width: 24px; height: 24px; border-radius: 6px;
+  display: inline-grid; place-items: center;
+  font-family: var(--font-data); font-weight: 700; font-size: 13px;
+  color: var(--paper); background: var(--term);
+}
+.gain-row-head .term-name { font-size: 13.5px; font-weight: 600; }
+.gain-row-head .term-unit { font-size: 12px; color: var(--ink-faint); }
+.gain-row-head .term-value { margin-left: auto; font-family: var(--font-data); font-size: 15px; font-variant-numeric: tabular-nums; }
+.gain-row-head .term-value.off { color: var(--ink-faint); }
+.gain-track { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 6px; }
+.nudge {
+  height: 34px; width: 34px; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface);
+  font-family: var(--font-data); font-size: 18px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0;
+  user-select: none; -webkit-user-select: none; touch-action: manipulation;
+}
+.fader-wrap { position: relative; height: 34px; }
+.fader-scale { position: absolute; left: 11px; right: 11px; top: 26px; height: 8px; pointer-events: none; }
+.fader-scale span { position: absolute; top: 0; transform: translateX(-50%); font-family: var(--font-data); font-size: 8.5px; color: var(--ink-faint); line-height: 1; }
+.fader-scale span::before { content: ""; position: absolute; left: 50%; top: -6px; width: 1px; height: 4px; background: var(--ink-faint); }
+input[type="range"].fader {
+  -webkit-appearance: none; appearance: none;
+  position: absolute; inset: 0; width: 100%; height: 26px; margin: 0; background: transparent; cursor: pointer;
+  --fill: 0%;
+}
+input[type="range"].fader::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px;
+  background: linear-gradient(to right, var(--term) 0 var(--fill), var(--rule) var(--fill) 100%);
+}
+input[type="range"].fader::-moz-range-track { height: 6px; border-radius: 3px; background: var(--rule); }
+input[type="range"].fader::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--term); }
+input[type="range"].fader::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 22px; height: 26px; margin-top: -10px; border-radius: 5px;
+  background: linear-gradient(var(--term), var(--term)) center / 2px 14px no-repeat, var(--paper);
+  border: 1.5px solid var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+input[type="range"].fader::-moz-range-thumb {
+  width: 20px; height: 24px; border-radius: 5px;
+  background: linear-gradient(var(--term), var(--term)) center / 2px 14px no-repeat, var(--paper);
+  border: 1.5px solid var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.gain-row.locked { opacity: 0.45; }
+.gain-row.locked .term-value { font-family: var(--font-body); font-size: 12.5px; }
+.gain-row.locked input, .gain-row.locked .nudge { pointer-events: none; }
+
+.run-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-top: 4px; }
+.run-button {
+  height: 50px; border-radius: 12px; border: none; cursor: pointer;
+  background: var(--ink); color: var(--paper);
+  font-family: var(--font-display); font-size: 15px; letter-spacing: 0.14em; text-transform: uppercase;
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+}
+.run-button svg { width: 14px; height: 14px; fill: currentColor; }
+.run-button.running { background: var(--surface); color: var(--ink); border: 1px solid var(--rule); }
+.attempts { font-family: var(--font-data); font-size: 12px; color: var(--ink-faint); text-align: right; min-width: 52px; }
+
+/* Result sheet */
+.result {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+  border-radius: 16px 16px 0 0;
+  box-shadow: var(--shadow);
+  padding-block: 14px 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: grid; gap: 10px;
+  transform: translateY(0);
+  transition: transform 260ms cubic-bezier(.2,.8,.2,1);
+  z-index: 5;
+  max-height: 100%;
+  overflow-y: auto;
+}
+.result[hidden] { display: none !important; }
+.result-head { display: flex; align-items: center; gap: 10px; }
+.verdict {
+  font-family: var(--font-display); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 5px 8px; border-radius: 6px; color: var(--paper); background: var(--fail); flex: none;
+}
+.result[data-state="pass"] .verdict { background: var(--pass); }
+.result-head h3 { margin: 0; font-size: 18px; line-height: 1.2; min-width: 0; text-wrap: balance; }
+.result-stars { margin-left: auto; font-size: 20px; letter-spacing: 2px; color: var(--rule); flex: none; }
+.result-stars .on { color: var(--star); }
+.result-text { margin: 0; display: grid; gap: 4px; }
+.result-text p { margin: 0; }
+.result-text .hint { color: var(--ink-soft); }
+.criteria { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.criteria li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; align-items: baseline; }
+.criteria .mark { color: var(--ink-faint); font-size: 13px; }
+.criteria li.met .mark { color: var(--star); }
+.criteria .value { font-family: var(--font-data); font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.criteria li.met .value { color: var(--ink); }
+.result-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.result-actions.single { grid-template-columns: 1fr; }
+.secondary-button, .primary-button {
+  height: 46px; border-radius: 11px; cursor: pointer; font-weight: 600; font-size: 15px;
+}
+.secondary-button { background: var(--paper); border: 1px solid var(--rule); }
+.primary-button { background: var(--pen); color: var(--paper); border: none; }
+
+/* Brief overlay */
+.brief {
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(8, 12, 14, 0.35);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  display: flex; flex-direction: column; align-items: center;
+  overflow-y: auto;
+}
+.brief-card {
+  margin-top: auto;
+  width: 100%; max-width: 560px;
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+  border-radius: 18px 18px 0 0;
+  box-shadow: var(--shadow);
+  padding-block: 20px 18px;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  display: grid; gap: 14px;
+}
+.brief-eyebrow { font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+.brief-card h2 { margin: 0; font-family: var(--font-display); font-size: 22px; letter-spacing: 0.02em; text-wrap: balance; line-height: 1.2; }
+.brief-card p { margin: 0; }
+.brief-tip { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border-radius: 10px; background: var(--paper); border: 1px solid var(--rule); font-size: 14px; }
+.brief-tip .term-badge { width: auto; padding: 0 7px; font-size: 11px; height: 22px; }
+.spec { display: grid; gap: 6px; margin: 0; font-size: 13.5px; }
+.spec div { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.spec dt { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+.spec dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.spec dd.mono { font-size: 12.5px; }
+.brief-stars { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13.5px; }
+.brief-stars li { display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 6px; }
+.brief-stars .s { color: var(--star); letter-spacing: 1px; }
+.field-note { font-size: 13px; color: var(--ink-soft); border-left: 2px solid var(--rule); padding-left: 10px; }
+.field-note b { font-weight: 600; color: var(--ink); }
+
+@media (min-width: 900px) {
+  .brief { padding: 24px; }
+  .brief-card { margin: auto; border-radius: 18px; border: 1px solid var(--rule); }
+  .play-body { flex-direction: row; gap: 20px; }
+  .scope { padding-block: 14px 14px; }
+  .console-column { flex: none; width: 360px; display: flex; flex-direction: column; justify-content: flex-end; position: relative; padding-block: 14px; }
+  .result { border-radius: 16px; border: 1px solid var(--rule); bottom: 14px; }
+}
+@media (max-width: 899px) {
+  .console-column { display: contents; }
+}
+@media (max-height: 680px) and (max-width: 899px) {
+  .play-screen { height: auto; overflow: visible; }
+  .scope { min-height: 300px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .result { transition: none; }
+}
+</style>
+</head>
+<body>
+<div id="levels-screen" class="screen levels-screen page-gutter">
+  <div class="levels-inner">
+    <header class="masthead">
+      <div class="masthead-row">
+        <h1 class="wordmark">Control System<span>Tuner</span></h1>
+        <div class="star-total" id="star-total" aria-label="Stars earned"><b>★ 0</b> / 27</div>
+      </div>
+      <p>Set P, I and D, then run the plant. Keep the measured trace inside the channel and settled before the deadline.</p>
+      <div class="how" aria-hidden="true">
+        <span><i class="goal"></i>Goal</span>
+        <span><i></i>Measured</span>
+        <span><i class="wall"></i>Out of bounds</span>
+      </div>
+    </header>
+    <div id="chapter-list" class="chapter-list" style="display:grid; gap:26px"></div>
+    <footer class="levels-foot">
+      <span>Progress is saved in this browser.</span>
+      <button class="text-button" id="reset-progress" type="button">Reset progress</button>
+    </footer>
+  </div>
+</div>
+
+<div id="play-screen" class="screen play-screen" hidden>
+  <header class="play-header page-gutter">
+    <button class="icon-button" id="back-button" type="button" aria-label="Back to levels">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Levels</span>
+    </button>
+    <div class="play-title">
+      <span class="numeral" id="play-numeral">01</span>
+      <span class="name" id="play-name">Robot arm</span>
+      <span class="best" id="play-best" aria-label="Best stars">★★★</span>
+    </div>
+    <button class="icon-button" id="brief-button" type="button" aria-label="Level brief">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r="0.95" fill="currentColor"/></svg>
+    </button>
+  </header>
+
+  <div class="play-body page-gutter">
+    <section class="scope" aria-label="Chart">
+      <div class="readout" id="readout" aria-live="off"></div>
+      <div class="chart-frame" id="chart-frame">
+        <canvas id="chart" role="img" aria-label="Goal, measured output and controller terms over time"></canvas>
+      </div>
+      <div class="legend">
+        <div class="legend-key" aria-hidden="true">
+          <span><i class="goal"></i>Goal</span>
+          <span><i></i>Measured</span>
+          <span><i class="ghost"></i>Last run</span>
+        </div>
+        <div class="legend-toggles" role="group" aria-label="Show controller terms">
+          <button class="chip" type="button" data-term="P" aria-pressed="true">P</button>
+          <button class="chip" type="button" data-term="I" aria-pressed="true">I</button>
+          <button class="chip" type="button" data-term="D" aria-pressed="true">D</button>
+          <button class="chip" type="button" data-term="S" aria-pressed="true" aria-label="P plus I plus D">Σ</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="console-column">
+      <section class="console" id="console" aria-label="Gains">
+        <div id="gain-rows" style="display:grid; gap:6px"></div>
+        <div class="run-row">
+          <button class="run-button" id="run-button" type="button">
+            <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1.2v9.6L10.4 6z"/></svg>
+            <span>Run</span>
+          </button>
+          <div class="attempts" id="attempts">Run 1</div>
+        </div>
+      </section>
+      <section class="result page-gutter" id="result" hidden aria-live="polite">
+        <div class="result-head">
+          <span class="verdict" id="result-verdict">Missed</span>
+          <h3 id="result-title">Overshoot</h3>
+          <span class="result-stars" id="result-stars" aria-label="Stars">★★★</span>
+        </div>
+        <div class="result-text">
+          <p id="result-detail"></p>
+          <p class="hint" id="result-hint"></p>
+        </div>
+        <ul class="criteria" id="result-criteria"></ul>
+        <div class="result-actions" id="result-actions">
+          <button class="secondary-button" type="button" id="tune-again">Tune again</button>
+          <button class="primary-button" type="button" id="next-level">Next level</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="brief" id="brief" hidden role="dialog" aria-modal="true" aria-labelledby="brief-title">
+  <div class="brief-card page-gutter">
+    <div class="brief-eyebrow" id="brief-eyebrow">Level 1 · Meet the knobs</div>
+    <h2 id="brief-title">Robot arm</h2>
+    <p id="brief-story"></p>
+    <div class="brief-tip"><span class="term-badge" id="brief-badge" style="--term: var(--ink)">TIP</span><span id="brief-tip"></span></div>
+    <dl class="spec" id="brief-spec"></dl>
+    <ul class="brief-stars" id="brief-stars"></ul>
+    <p class="field-note" id="brief-note"></p>
+    <button class="primary-button" type="button" id="brief-start">Start tuning</button>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// Control System Tuner — simulation core (shared by the game page and the
+// offline calibration scripts). Pure functions, no DOM.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// Level parameters. Every physical constant for every level lives here.
+// Units are noted beside each value. Times are in seconds.
+// ---------------------------------------------------------------------------
+const GRAVITY_METERS_PER_SECOND_SQUARED = 9.81;
+
+const ROBOT_ARM = {
+  motorSpeedGainDegreesPerSecondPerPercent: 3.0,   // 100 % drive -> 300 deg/s
+  motorTimeConstantSeconds: 0.15,
+  startAngleDegrees: 0,
+  targetAngleDegrees: 90,
+  stepTimeSeconds: 0.3,
+};
+
+const ESPRESSO_BOILER = {
+  ambientTemperatureCelsius: 22,
+  brewTemperatureCelsius: 93,
+  heaterGainCelsiusPerPercent: 2.0,                // 100 % heater -> +200 C at equilibrium
+  elementTimeConstantSeconds: 0.6,
+  waterTimeConstantSeconds: 5.0,
+  sensorDeadTimeSeconds: 0.25,
+  stepTimeSeconds: 1.0,
+};
+
+const QUADCOPTER = {
+  massKilograms: 1.5,
+  dragNewtonSecondsPerMeter: 0.4,
+  motorTimeConstantSeconds: 0.06,
+  thrustSlewNewtonsPerSecond: 120,
+  startAltitudeMeters: 1.0,
+  targetAltitudeMeters: 4.0,
+  stepTimeSeconds: 0.5,
+};
+
+const SHIP = {
+  nomotoGainPerSecond: 0.2,                        // steady yaw rate (deg/s) per degree of rudder
+  nomotoTimeConstantSeconds: 8.0,
+  rudderServoTimeConstantSeconds: 0.5,
+  rudderLimitDegrees: 35,
+  rudderSlewDegreesPerSecond: 10,
+  startHeadingDegrees: 90,
+  targetHeadingDegrees: 135,
+  turnStartSeconds: 3,
+  turnDurationSeconds: 24,
+};
+
+const REFLOW_OVEN = {
+  ambientTemperatureCelsius: 25,
+  heaterGainCelsiusPerPercent: 3.0,                // 100 % heater -> +300 C air at equilibrium
+  airTimeConstantSeconds: 4,
+  boardTimeConstantSeconds: 8,
+  thermocoupleDeadTimeSeconds: 1.0,
+};
+
+const CRUISE_CONTROL = {
+  vehicleMassKilograms: 1500,
+  maximumDriveForceNewtons: 3500,
+  airDensityKilogramsPerCubicMeter: 1.2,
+  dragAreaSquareMeters: 0.65,                      // Cd * frontal area
+  rollingResistanceCoefficient: 0.012,
+  engineTimeConstantSeconds: 1.0,
+  engineDeadTimeSeconds: 0.3,
+  throttleSlewPercentPerSecond: 60,
+  hillGradePercent: 6,
+  hillStartSeconds: 60,
+};
+
+const SHOWER = {
+  coldWaterCelsius: 12,
+  hotWaterCelsius: 55,
+  mixingTimeConstantSeconds: 0.6,
+  pipeDeadTimeSeconds: 1.5,
+  startTemperatureCelsius: 25,
+  targetTemperatureCelsius: 38,
+  stepTimeSeconds: 1.0,
+};
+
+const CAMERA_GIMBAL = {
+  peakAngularAccelerationDegreesPerSecondSquared: 3000, // at 100 % motor torque
+  bearingDampingPerSecond: 2.0,
+  gyroNoiseStandardDeviationDegrees: 0.15,
+  gustAngularAccelerationDegreesPerSecondSquared: 700,
+};
+
+const MAGLEV = {
+  instabilityRateRadiansPerSecond: 14,             // open-loop unstable pole
+  coilAccelerationMillimetersPerSecondSquaredPerAmp: 9000,
+  coilTimeConstantSeconds: 0.01,
+  holdingCurrentAmps: 1.5,                         // what the nominal ball needs
+  extraBallWeightAmps: 0.12,                       // this ball is heavier than nominal
+  linearisationHeightMillimeters: 12,
+  floorHeightMillimeters: 0,
+  magnetFaceHeightMillimeters: 25,
+};
+
+// ---------------------------------------------------------------------------
+// Goal profiles
+// ---------------------------------------------------------------------------
+// keyframes: [{ timeSeconds, value, approach }] where approach describes how the
+// goal travels from the previous keyframe to this one:
+//   'step'   – hold the previous value, then jump at this keyframe's time
+//   'linear' – straight ramp
+//   'smooth' – cycloidal S-curve (zero velocity and acceleration at both ends)
+function makeGoalFunction(keyframes) {
+  return function goalAt(timeSeconds) {
+    if (timeSeconds <= keyframes[0].timeSeconds) return keyframes[0].value;
+    for (let keyframeIndex = 1; keyframeIndex < keyframes.length; keyframeIndex++) {
+      const previousKeyframe = keyframes[keyframeIndex - 1];
+      const nextKeyframe = keyframes[keyframeIndex];
+      if (timeSeconds < nextKeyframe.timeSeconds) {
+        if (nextKeyframe.approach === 'step') return previousKeyframe.value;
+        const segmentFraction = (timeSeconds - previousKeyframe.timeSeconds) /
+          (nextKeyframe.timeSeconds - previousKeyframe.timeSeconds);
+        const easedFraction = nextKeyframe.approach === 'smooth'
+          ? segmentFraction - Math.sin(2 * Math.PI * segmentFraction) / (2 * Math.PI)
+          : segmentFraction;
+        return previousKeyframe.value + (nextKeyframe.value - previousKeyframe.value) * easedFraction;
+      }
+    }
+    return keyframes[keyframes.length - 1].value;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Plants. Each plant integrates its own state vector given the actuator value
+// that actually reaches it (after saturation and any dead time) and an
+// external disturbance.
+// ---------------------------------------------------------------------------
+function cruiseResistanceNewtons(speedMetersPerSecond, gradePercent) {
+  const parameters = CRUISE_CONTROL;
+  const aerodynamicDrag = 0.5 * parameters.airDensityKilogramsPerCubicMeter *
+    parameters.dragAreaSquareMeters * speedMetersPerSecond * Math.abs(speedMetersPerSecond);
+  const rollingResistance = parameters.rollingResistanceCoefficient *
+    parameters.vehicleMassKilograms * GRAVITY_METERS_PER_SECOND_SQUARED;
+  const gradeForce = parameters.vehicleMassKilograms * GRAVITY_METERS_PER_SECOND_SQUARED *
+    Math.sin(Math.atan(gradePercent / 100));
+  return aerodynamicDrag + rollingResistance + gradeForce;
+}
+const KILOMETERS_PER_HOUR_PER_METER_PER_SECOND = 3.6;
+
+function cruiseEquilibriumThrottlePercent(speedKilometersPerHour) {
+  const speedMetersPerSecond = speedKilometersPerHour / KILOMETERS_PER_HOUR_PER_METER_PER_SECOND;
+  return 100 * cruiseResistanceNewtons(speedMetersPerSecond, 0) / CRUISE_CONTROL.maximumDriveForceNewtons;
+}
+
+const PLANTS = {
+  robotArm: {
+    initialState: () => [ROBOT_ARM.startAngleDegrees, 0],
+    derivatives(state, actuator, disturbance, slope) {
+      const angularVelocity = state[1];
+      const p = ROBOT_ARM;
+      slope[0] = angularVelocity;
+      slope[1] = (p.motorSpeedGainDegreesPerSecondPerPercent * actuator - angularVelocity) / p.motorTimeConstantSeconds;
+    },
+    output: (state) => state[0],
+  },
+
+  espressoBoiler: {
+    initialState: () => [0, 0], // element rise, water rise (C above ambient)
+    derivatives(state, actuator, disturbance, slope) {
+      const elementRise = state[0], waterRise = state[1];
+      const p = ESPRESSO_BOILER;
+      slope[0] = (p.heaterGainCelsiusPerPercent * actuator - elementRise) / p.elementTimeConstantSeconds;
+      slope[1] = (elementRise - waterRise) / p.waterTimeConstantSeconds;
+    },
+    output: (state) => ESPRESSO_BOILER.ambientTemperatureCelsius + state[1],
+  },
+
+  quadcopter: {
+    initialState: () => [QUADCOPTER.startAltitudeMeters, 0, 0], // altitude, climb rate, extra thrust
+    derivatives(state, actuator, disturbance, slope) {
+      const climbRate = state[1], extraThrust = state[2];
+      const p = QUADCOPTER;
+      slope[0] = climbRate;
+      slope[1] = (extraThrust - p.dragNewtonSecondsPerMeter * climbRate) / p.massKilograms;
+      slope[2] = (actuator - extraThrust) / p.motorTimeConstantSeconds;
+    },
+    output: (state) => state[0],
+  },
+
+  ship: {
+    initialState: () => [SHIP.startHeadingDegrees, 0, 0], // heading, yaw rate, rudder angle
+    derivatives(state, actuator, disturbance, slope) {
+      const yawRate = state[1], rudderAngle = state[2];
+      const p = SHIP;
+      slope[0] = yawRate;
+      slope[1] = (p.nomotoGainPerSecond * rudderAngle - yawRate) / p.nomotoTimeConstantSeconds;
+      slope[2] = (actuator - rudderAngle) / p.rudderServoTimeConstantSeconds;
+    },
+    output: (state) => state[0],
+  },
+
+  reflowOven: {
+    initialState: () => [0, 0], // air rise, board rise (C above ambient)
+    derivatives(state, actuator, disturbance, slope) {
+      const airRise = state[0], boardRise = state[1];
+      const p = REFLOW_OVEN;
+      slope[0] = (p.heaterGainCelsiusPerPercent * actuator - airRise) / p.airTimeConstantSeconds;
+      slope[1] = (airRise - boardRise) / p.boardTimeConstantSeconds;
+    },
+    output: (state) => REFLOW_OVEN.ambientTemperatureCelsius + state[1],
+  },
+
+  cruiseControl: {
+    initialState: (level) => {
+      const startSpeed = level.goalKeyframes[0].value;
+      return [startSpeed / KILOMETERS_PER_HOUR_PER_METER_PER_SECOND,
+        cruiseEquilibriumThrottlePercent(startSpeed)];
+    },
+    derivatives(state, actuator, disturbanceGradePercent, slope) {
+      const speedMetersPerSecond = state[0], engineThrottle = state[1];
+      const p = CRUISE_CONTROL;
+      const driveForce = engineThrottle / 100 * p.maximumDriveForceNewtons;
+      slope[0] = (driveForce - cruiseResistanceNewtons(speedMetersPerSecond, disturbanceGradePercent)) / p.vehicleMassKilograms;
+      slope[1] = (actuator - engineThrottle) / p.engineTimeConstantSeconds;
+    },
+    output: (state) => state[0] * KILOMETERS_PER_HOUR_PER_METER_PER_SECOND,
+  },
+
+  shower: {
+    initialState: () => [SHOWER.startTemperatureCelsius],
+    derivatives(state, actuator, disturbance, slope) {
+      const p = SHOWER;
+      const mixedTemperature = p.coldWaterCelsius + (p.hotWaterCelsius - p.coldWaterCelsius) * actuator / 100;
+      slope[0] = (mixedTemperature - state[0]) / p.mixingTimeConstantSeconds;
+    },
+    output: (state) => state[0],
+  },
+
+  cameraGimbal: {
+    initialState: () => [0, 0],
+    derivatives(state, actuator, disturbanceAcceleration, slope) {
+      const angularVelocity = state[1];
+      const p = CAMERA_GIMBAL;
+      slope[0] = angularVelocity;
+      slope[1] = p.peakAngularAccelerationDegreesPerSecondSquared * actuator / 100
+        - p.bearingDampingPerSecond * angularVelocity + disturbanceAcceleration;
+    },
+    output: (state) => state[0],
+  },
+
+  maglev: {
+    initialState: (level) => [level.goalKeyframes[0].value, 0, MAGLEV.holdingCurrentAmps], // height, velocity, coil current
+    derivatives(state, actuator, disturbance, slope) {
+      const height = state[0], velocity = state[1], coilCurrent = state[2];
+      const p = MAGLEV;
+      // Linearised about the nominal hover point: rising brings the ball closer to
+      // the magnet, which pulls harder (the unstable term).
+      slope[0] = velocity;
+      slope[1] = p.instabilityRateRadiansPerSecond ** 2 * (height - p.linearisationHeightMillimeters)
+        + p.coilAccelerationMillimetersPerSecondSquaredPerAmp *
+          (coilCurrent - p.holdingCurrentAmps - p.extraBallWeightAmps);
+      slope[2] = (actuator - coilCurrent) / p.coilTimeConstantSeconds;
+    },
+    output: (state) => state[0],
+    constrain(state) {
+      const p = MAGLEV;
+      if (state[0] <= p.floorHeightMillimeters) { state[0] = p.floorHeightMillimeters; if (state[1] < 0) state[1] = 0; }
+      if (state[0] >= p.magnetFaceHeightMillimeters) { state[0] = p.magnetFaceHeightMillimeters; if (state[1] > 0) state[1] = 0; }
+    },
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Levels
+// ---------------------------------------------------------------------------
+const CHAPTERS = [
+  { name: 'Meet the knobs', summary: 'One new knob per level.' },
+  { name: 'Moving goals', summary: 'S-curves, ramps, steps and a hill.' },
+  { name: 'Trouble', summary: 'Delay, noise and a plant that wants to fall.' },
+];
+// envelope: lagSeconds   – how far behind a moving goal the output may trail
+//           looseBand    – half-width of the channel while things are changing
+//           tightBand    – half-width once settled
+//           funnelSeconds– time over which the channel narrows from loose to tight
+// gains:    each slider maps 0 at the far left, then logarithmically min..max
+const LEVELS = [
+  {
+    id: 'robot-arm', chapter: 0, number: 1, name: 'Robot arm', tag: 'P only · step',
+    plantKey: 'robotArm',
+    story: "Swing a robot arm joint from 0° to 90°. The motor has momentum, so a hard push carries the arm past the target.",
+    tip: "P pushes in proportion to the error: far from the goal means a big push. Too little P is slow; too much swings past.",
+    fieldNote: "A hobby servo is this loop in a box: a potentiometer reads the angle, and the controller drives the motor in proportion to the error.",
+    transferFunction: "G(s) = 3 / (s·(0.15s + 1))",
+    starCriteria: [{ metric: 'iae', limit: 31.5 }, { metric: 'overshoot', limit: 5 }],
+    durationSeconds: 3.0, timeStepSeconds: 0.002,
+    actuatorMinimum: -100, actuatorMaximum: 100, actuatorInitial: 0,
+    outputUnit: '°', actuatorUnit: '%', outputName: 'Joint angle', actuatorName: 'Motor drive',
+    goalKeyframes: [{ timeSeconds: 0, value: 0 }, { timeSeconds: 0.3, value: 90, approach: 'step' }],
+    disturbanceEvents: [],
+    envelope: { lagSeconds: 0.75, looseBand: 11, tightBand: 2, funnelSeconds: 0.8 },
+    unlocked: { P: true, I: false, D: false },
+    gains: { P: { min: 0.05, max: 20, start: 0.25 }, I: { min: 0.01, max: 10, start: 0 }, D: { min: 0.001, max: 1, start: 0 } },
+    outputRange: [-15, 115], termRange: [-150, 250],
+  },
+  {
+    id: 'espresso', chapter: 0, number: 2, name: 'Espresso boiler', tag: 'P + I · step',
+    plantKey: 'espressoBoiler',
+    story: "Heat the boiler from 22 °C to 93 °C brew temperature without passing 100 °C. The heater can only heat, so anything you overshoot has to cool off on its own.",
+    tip: "P alone stalls short of the goal, because it needs some error to keep the heater on. I adds up the error over time and keeps pushing until it is gone.",
+    fieldNote: "Espresso is usually brewed with water between about 90 and 96 °C. Home baristas retrofit PID controllers to their machines to hold it there.",
+    transferFunction: "G(s) = 2·e^(−0.25s) / ((5s + 1)·(0.6s + 1))",
+    starCriteria: [{ metric: 'settle', limit: 10 }, { metric: 'overshoot', limit: 1 }],
+    durationSeconds: 28, timeStepSeconds: 0.01, deadTimeSeconds: ESPRESSO_BOILER.sensorDeadTimeSeconds,
+    actuatorMinimum: 0, actuatorMaximum: 100, actuatorInitial: 0,
+    outputUnit: '°C', actuatorUnit: '%', outputName: 'Water', actuatorName: 'Heater',
+    goalKeyframes: [{ timeSeconds: 0, value: 22 }, { timeSeconds: 1.0, value: 93, approach: 'step' }],
+    disturbanceEvents: [],
+    envelope: { lagSeconds: 7, looseBand: 7, tightBand: 1.5, funnelSeconds: 14 },
+    unlocked: { P: true, I: true, D: false },
+    gains: { P: { min: 0.2, max: 100, start: 5 }, I: { min: 0.01, max: 20, start: 0 }, D: { min: 0.01, max: 10, start: 0 } },
+    outputRange: [10, 110], termRange: [-60, 160],
+  },
+  {
+    id: 'quadcopter', chapter: 0, number: 3, name: 'Quadcopter', tag: 'P + D · step',
+    plantKey: 'quadcopter',
+    story: "Climb from 1 m to 4 m and hold. Air gives almost no friction, so nothing slows the drone down except you.",
+    tip: "D watches how fast the altitude is changing and brakes before you arrive. P makes a spring; D is the damper on it.",
+    fieldNote: "Flight controllers run PID loops like this hundreds to thousands of times per second, one for each axis.",
+    transferFunction: "G(s) = 1 / (s·(1.5s + 0.4)·(0.06s + 1))",
+    starCriteria: [{ metric: 'iae', limit: 2.35 }, { metric: 'overshoot', limit: 0.03 }],
+    durationSeconds: 5.5, timeStepSeconds: 0.002,
+    actuatorMinimum: -14.7, actuatorMaximum: 14.7, actuatorInitial: 0, actuatorSlewPerSecond: QUADCOPTER.thrustSlewNewtonsPerSecond,
+    outputUnit: 'm', actuatorUnit: 'N', outputName: 'Altitude', actuatorName: 'Extra thrust',
+    goalKeyframes: [{ timeSeconds: 0, value: 1 }, { timeSeconds: 0.5, value: 4, approach: 'step' }],
+    disturbanceEvents: [],
+    envelope: { lagSeconds: 1.5, looseBand: 0.6, tightBand: 0.15, funnelSeconds: 1.5 },
+    unlocked: { P: true, I: false, D: true },
+    gains: { P: { min: 0.2, max: 100, start: 6 }, I: { min: 0.01, max: 20, start: 0 }, D: { min: 0.05, max: 50, start: 0 } },
+    outputRange: [0, 5], termRange: [-25, 25],
+  },
+  {
+    id: 'ship', chapter: 1, number: 4, name: 'Ship autopilot', tag: 'S-curve turn',
+    plantKey: 'ship',
+    story: "Turn from heading 090° to 135° along a smooth S-curve. A ship takes seconds to start turning and seconds to stop, and the rudder moves at 10°/s.",
+    tip: "A moving goal needs enough P to keep up. D stops the swing from carrying the bow past the new heading.",
+    fieldNote: "Nicolas Minorsky wrote down PID control in 1922 after studying how helmsmen steer, while working on automatic steering for the US Navy.",
+    transferFunction: "G(s) = 0.2 / (s·(8s + 1)·(0.5s + 1))",
+    starCriteria: [{ metric: 'iae', limit: 40 }, { metric: 'overshoot', limit: 0.1 }],
+    durationSeconds: 42, timeStepSeconds: 0.01,
+    actuatorMinimum: -SHIP.rudderLimitDegrees, actuatorMaximum: SHIP.rudderLimitDegrees, actuatorInitial: 0,
+    actuatorSlewPerSecond: SHIP.rudderSlewDegreesPerSecond,
+    outputUnit: '°', actuatorUnit: '°', outputName: 'Heading', actuatorName: 'Rudder',
+    goalKeyframes: [{ timeSeconds: 0, value: SHIP.startHeadingDegrees },
+      { timeSeconds: SHIP.turnStartSeconds, value: SHIP.startHeadingDegrees, approach: 'step' },
+      { timeSeconds: SHIP.turnStartSeconds + SHIP.turnDurationSeconds, value: SHIP.targetHeadingDegrees, approach: 'smooth' }],
+    disturbanceEvents: [],
+    envelope: { lagSeconds: 2.5, looseBand: 3, tightBand: 1, funnelSeconds: 6 },
+    unlocked: { P: true, I: true, D: true },
+    gains: { P: { min: 0.1, max: 100, start: 4 }, I: { min: 0.001, max: 2, start: 0 }, D: { min: 0.1, max: 200, start: 0 } },
+    outputRange: [80, 145], termRange: [-60, 60],
+  },
+  {
+    id: 'reflow', chapter: 1, number: 5, name: 'Reflow oven', tag: 'Ramp profile',
+    plantKey: 'reflowOven',
+    story: "Follow a solder reflow profile: ramp to 150 °C, soak up to 180 °C, then spike to 235 °C. The thermocouple reports a second late.",
+    tip: "P alone falls further behind on every ramp. I builds up the extra heat a ramp needs, and a little D keeps the delay from turning into wobble.",
+    fieldNote: "Lead-free SAC305 solder melts at about 217–220 °C, so the peak has to clear that without cooking the parts.",
+    transferFunction: "G(s) = 3·e^(−1s) / ((4s + 1)·(8s + 1))",
+    starCriteria: [{ metric: 'iae', limit: 500 }, { metric: 'overshoot', limit: 2.5 }],
+    durationSeconds: 170, timeStepSeconds: 0.02, deadTimeSeconds: REFLOW_OVEN.thermocoupleDeadTimeSeconds,
+    actuatorMinimum: 0, actuatorMaximum: 100, actuatorInitial: 0,
+    outputUnit: '°C', actuatorUnit: '%', outputName: 'Board', actuatorName: 'Heater',
+    goalKeyframes: [{ timeSeconds: 0, value: 25 }, { timeSeconds: 5, value: 25, approach: 'step' },
+      { timeSeconds: 67.5, value: 150, approach: 'linear' }, { timeSeconds: 112.5, value: 180, approach: 'linear' },
+      { timeSeconds: 134.5, value: 235, approach: 'linear' }],
+    disturbanceEvents: [],
+    envelope: { lagSeconds: 5, looseBand: 12, tightBand: 3, funnelSeconds: 12 },
+    unlocked: { P: true, I: true, D: true },
+    gains: { P: { min: 0.1, max: 200, start: 2 }, I: { min: 0.001, max: 30, start: 0 }, D: { min: 0.1, max: 300, start: 0 } },
+    outputRange: [0, 260], termRange: [-60, 160],
+  },
+  {
+    id: 'cruise', chapter: 1, number: 6, name: 'Cruise control', tag: 'Steps + hill',
+    plantKey: 'cruiseControl',
+    story: "Hold the set speed through three changes, then up a 6 % hill. The engine can only add power so fast, and drag grows with the square of speed.",
+    tip: "On the hill, P needs a steady error to make the extra push, so the car settles slow. I learns the extra throttle the hill takes.",
+    fieldNote: "Cruise control was invented by Ralph Teetor, a blind engineer, and first sold on Chrysler cars in 1958.",
+    transferFunction: "m·dv/dt = F(throttle) − ½ρC_dA·v² − F_roll − F_hill",
+    starCriteria: [{ metric: 'iae', limit: 310 }, { metric: 'travel', limit: 560 }],
+    durationSeconds: 80, timeStepSeconds: 0.01, deadTimeSeconds: CRUISE_CONTROL.engineDeadTimeSeconds,
+    actuatorMinimum: -30, actuatorMaximum: 100, actuatorInitial: cruiseEquilibriumThrottlePercent(60),
+    actuatorSlewPerSecond: CRUISE_CONTROL.throttleSlewPercentPerSecond,
+    outputUnit: 'km/h', actuatorUnit: '%', outputName: 'Speed', actuatorName: 'Throttle',
+    goalKeyframes: [{ timeSeconds: 0, value: 60 }, { timeSeconds: 2, value: 90, approach: 'step' },
+      { timeSeconds: 25, value: 110, approach: 'step' }, { timeSeconds: 45, value: 90, approach: 'step' }],
+    disturbanceEvents: [{ timeSeconds: CRUISE_CONTROL.hillStartSeconds, value: CRUISE_CONTROL.hillGradePercent, label: 'Hill' }],
+    envelope: { lagSeconds: 8, looseBand: 5, tightBand: 1.5, funnelSeconds: 10 },
+    unlocked: { P: true, I: true, D: true },
+    gains: { P: { min: 0.1, max: 100, start: 5 }, I: { min: 0.001, max: 10, start: 0 }, D: { min: 0.1, max: 100, start: 0 } },
+    outputRange: [50, 120], termRange: [-60, 160],
+  },
+  {
+    id: 'shower', chapter: 2, number: 7, name: 'Shower', tag: 'Dead time',
+    plantKey: 'shower',
+    story: "Warm the shower from 25 °C to 38 °C. Water takes 1.5 s to get from the valve to your head, so you feel every change late.",
+    tip: "With a long delay, a strong P chases its own tail. Go gentle and let I do most of the work.",
+    fieldNote: "Pipe delay is why everyone over-corrects in an unfamiliar shower: by the time it feels too cold, the hot water is already on its way.",
+    transferFunction: "G(s) = 0.43·e^(−1.5s) / (0.6s + 1)",
+    starCriteria: [{ metric: 'settle', limit: 8.5 }, { metric: 'overshoot', limit: 0.1 }],
+    durationSeconds: 20, timeStepSeconds: 0.005, deadTimeSeconds: SHOWER.pipeDeadTimeSeconds,
+    actuatorMinimum: 0, actuatorMaximum: 100,
+    actuatorInitial: 100 * (SHOWER.startTemperatureCelsius - SHOWER.coldWaterCelsius) / (SHOWER.hotWaterCelsius - SHOWER.coldWaterCelsius),
+    outputUnit: '°C', actuatorUnit: '%', outputName: 'Water at head', actuatorName: 'Hot valve',
+    goalKeyframes: [{ timeSeconds: 0, value: 25 }, { timeSeconds: 1, value: 38, approach: 'step' }],
+    disturbanceEvents: [],
+    envelope: { lagSeconds: 7, looseBand: 2.5, tightBand: 0.6, funnelSeconds: 7 },
+    unlocked: { P: true, I: true, D: true },
+    gains: { P: { min: 0.05, max: 20, start: 6 }, I: { min: 0.05, max: 5, start: 0 }, D: { min: 0.01, max: 10, start: 0 } },
+    outputRange: [20, 46], termRange: [-60, 160],
+  },
+  {
+    id: 'gimbal', chapter: 2, number: 8, name: 'Camera gimbal', tag: 'Noise + gusts',
+    plantKey: 'cameraGimbal',
+    story: "Tilt the camera to −30° and back while gusts shove it. The angle sensor is noisy, and D turns that noise into motor chatter.",
+    tip: "D is a derivative, and derivatives magnify noise. Use just enough D to damp the swing, and watch the D trace for fuzz.",
+    fieldNote: "Brushless camera gimbals hold the horizon with a gyro and a fast PID loop on each axis.",
+    transferFunction: "G(s) = 30 / (s·(s + 2))",
+    starCriteria: [{ metric: 'iae', limit: 7.7 }, { metric: 'rms', limit: 47 }],
+    durationSeconds: 4.8, timeStepSeconds: 0.002,
+    actuatorMinimum: -100, actuatorMaximum: 100, actuatorInitial: 0,
+    measurementNoise: CAMERA_GIMBAL.gyroNoiseStandardDeviationDegrees, noiseSeed: 7,
+    outputUnit: '°', actuatorUnit: '%', outputName: 'Tilt', actuatorName: 'Motor torque',
+    goalKeyframes: [{ timeSeconds: 0, value: 0 }, { timeSeconds: 0.5, value: -30, approach: 'step' },
+      { timeSeconds: 2.4, value: 0, approach: 'step' }],
+    disturbanceEvents: [
+      { timeSeconds: 1.4, value: CAMERA_GIMBAL.gustAngularAccelerationDegreesPerSecondSquared, label: 'Gust' },
+      { timeSeconds: 1.7, value: 0, label: '' },
+      { timeSeconds: 3.4, value: -CAMERA_GIMBAL.gustAngularAccelerationDegreesPerSecondSquared, label: 'Gust' },
+      { timeSeconds: 3.7, value: 0, label: '' }],
+    envelope: { lagSeconds: 0.3, looseBand: 4, tightBand: 0.8, funnelSeconds: 0.4 },
+    unlocked: { P: true, I: true, D: true },
+    gains: { P: { min: 0.1, max: 200, start: 20 }, I: { min: 0.01, max: 100, start: 0 }, D: { min: 0.001, max: 20, start: 0 } },
+    outputRange: [-40, 10], termRange: [-150, 150],
+    derivativeFilterSeconds: 0.006,
+  },
+  {
+    id: 'maglev', chapter: 2, number: 9, name: 'Maglev', tag: 'Unstable',
+    plantKey: 'maglev',
+    story: "Float a steel ball under an electromagnet and move it between heights. The closer it gets, the harder the magnet pulls, so left alone it falls or snaps up.",
+    tip: "P must be strong enough to beat the runaway, and D must damp the bounce. This ball is a little heavier than the magnet expects, so I matters too.",
+    fieldNote: "Static magnets alone can't hold an object in stable levitation (Earnshaw's theorem), which is why maglev needs active feedback.",
+    transferFunction: "G(s) = 9000 / ((s² − 196)·(0.01s + 1))",
+    starCriteria: [{ metric: 'iae', limit: 1.0 }, { metric: 'overshoot', limit: 0.1 }],
+    durationSeconds: 3.8, timeStepSeconds: 0.0005,
+    actuatorMinimum: 0, actuatorMaximum: 3, actuatorInitial: MAGLEV.holdingCurrentAmps,
+    outputUnit: 'mm', actuatorUnit: 'A', outputName: 'Height', actuatorName: 'Coil current',
+    goalKeyframes: [{ timeSeconds: 0, value: 12 }, { timeSeconds: 0.5, value: 15, approach: 'step' },
+      { timeSeconds: 1.6, value: 10, approach: 'step' }, { timeSeconds: 2.7, value: 12, approach: 'step' }],
+    disturbanceEvents: [{ timeSeconds: 0, value: 0, label: 'Release' }],
+    envelope: { lagSeconds: 0.3, looseBand: 1.5, tightBand: 0.4, funnelSeconds: 0.5 },
+    unlocked: { P: true, I: true, D: true },
+    gains: { P: { min: 0.02, max: 2, start: 0.05 }, I: { min: 0.01, max: 10, start: 0 }, D: { min: 0.0005, max: 0.05, start: 0 } },
+    outputRange: [0, 25], termRange: [-2, 4],
+    derivativeFilterSeconds: 0.003,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Slider <-> gain mapping. Position 0 is "off"; 1..SLIDER_STEPS is log-spaced.
+// ---------------------------------------------------------------------------
+const SLIDER_STEPS = 1000;
+const ANTI_WINDUP_MODE = 'conditional'; // integral pauses while the actuator is pinned
+function gainFromSliderPosition(position, range) {
+  if (position <= 0) return 0;
+  const fraction = (position - 1) / (SLIDER_STEPS - 1);
+  return range.min * Math.pow(range.max / range.min, fraction);
+}
+function sliderPositionFromGain(gain, range) {
+  if (!(gain > 0)) return 0;
+  const clampedGain = Math.min(range.max, Math.max(range.min, gain));
+  return Math.round(1 + (SLIDER_STEPS - 1) * Math.log(clampedGain / range.min) / Math.log(range.max / range.min));
+}
+
+// ---------------------------------------------------------------------------
+// Random numbers (deterministic, so every run of a level sees the same noise)
+// ---------------------------------------------------------------------------
+function createSeededRandom(seed) {
+  let state = seed >>> 0;
+  return function nextRandom() {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function createGaussianSource(seed) {
+  const nextRandom = createSeededRandom(seed);
+  let spareValue = null;
+  return function nextGaussian() {
+    if (spareValue !== null) { const value = spareValue; spareValue = null; return value; }
+    let uniformA = 0;
+    while (uniformA === 0) uniformA = nextRandom();
+    const uniformB = nextRandom();
+    const radius = Math.sqrt(-2 * Math.log(uniformA));
+    spareValue = radius * Math.sin(2 * Math.PI * uniformB);
+    return radius * Math.cos(2 * Math.PI * uniformB);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Disturbance lookup (piecewise constant, defined by events)
+// ---------------------------------------------------------------------------
+function disturbanceAt(level, timeSeconds) {
+  let currentValue = 0;
+  for (const event of level.disturbanceEvents) {
+    if (timeSeconds >= event.timeSeconds) currentValue = event.value;
+  }
+  return currentValue;
+}
+
+// ---------------------------------------------------------------------------
+// Closed-loop simulation
+// PID (parallel form):  u = P + I + D
+//   P = Kp * error
+//   I = actuatorInitial + Ki * integral(error)   (clamped to the actuator range)
+//   D = -Kd * d(filtered measurement)/dt         (derivative on measurement: no kick)
+// The plant is integrated with RK4; the actuator is held constant over each step.
+// ---------------------------------------------------------------------------
+function simulate(level, gains) {
+  const plant = PLANTS[level.plantKey];
+  const timeStep = level.timeStepSeconds;
+  const sampleCount = Math.round(level.durationSeconds / timeStep) + 1;
+  const goalAt = makeGoalFunction(level.goalKeyframes);
+  const derivativeFilterSeconds = level.derivativeFilterSeconds || 0.03;
+  const derivativeFilterBlend = 1 - Math.exp(-timeStep / derivativeFilterSeconds);
+  const nextGaussian = createGaussianSource(level.noiseSeed || 1);
+  const noiseStandardDeviation = level.measurementNoise || 0;
+  const deadTimeSteps = Math.round((level.deadTimeSeconds || 0) / timeStep);
+
+  const result = {
+    time: new Float64Array(sampleCount), goal: new Float64Array(sampleCount),
+    measured: new Float64Array(sampleCount), trueOutput: new Float64Array(sampleCount),
+    proportional: new Float64Array(sampleCount), integral: new Float64Array(sampleCount),
+    derivative: new Float64Array(sampleCount), controllerSum: new Float64Array(sampleCount),
+    actuator: new Float64Array(sampleCount), sampleCount, timeStep,
+  };
+  const slewLimitPerStep = level.actuatorSlewPerSecond ? level.actuatorSlewPerSecond * timeStep : Infinity;
+  let appliedActuator = level.actuatorInitial;
+
+  const state = Float64Array.from(plant.initialState(level));
+  const stateSize = state.length;
+  const slopeA = new Float64Array(stateSize), slopeB = new Float64Array(stateSize);
+  const slopeC = new Float64Array(stateSize), slopeD = new Float64Array(stateSize);
+  const stagingState = new Float64Array(stateSize);
+  let integralTerm = level.actuatorInitial;
+  let filteredMeasurement = null;
+  const actuatorDelayLine = new Float64Array(deadTimeSteps + 1).fill(level.actuatorInitial);
+  let delayLineWriteIndex = 0;
+
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+    const timeSeconds = sampleIndex * timeStep;
+    const goalValue = goalAt(timeSeconds);
+    const trueOutput = plant.output(state);
+    const measuredOutput = trueOutput + (noiseStandardDeviation ? noiseStandardDeviation * nextGaussian() : 0);
+    const error = goalValue - measuredOutput;
+
+    const proportionalTerm = gains.P * error;
+    let derivativeTerm = 0;
+    if (filteredMeasurement === null) {
+      filteredMeasurement = measuredOutput;
+    } else {
+      const newFilteredMeasurement = filteredMeasurement + derivativeFilterBlend * (measuredOutput - filteredMeasurement);
+      derivativeTerm = -gains.D * (newFilteredMeasurement - filteredMeasurement) / timeStep;
+      filteredMeasurement = newFilteredMeasurement;
+    }
+    const controllerSum = proportionalTerm + integralTerm + derivativeTerm;
+    const actuatorCommand = Math.min(level.actuatorMaximum, Math.max(level.actuatorMinimum, controllerSum));
+    // Real actuators can only move so fast (rudder motors, throttle bodies).
+    appliedActuator += Math.max(-slewLimitPerStep, Math.min(slewLimitPerStep, actuatorCommand - appliedActuator));
+
+    result.time[sampleIndex] = timeSeconds;
+    result.goal[sampleIndex] = goalValue;
+    result.measured[sampleIndex] = measuredOutput;
+    result.trueOutput[sampleIndex] = trueOutput;
+    result.proportional[sampleIndex] = proportionalTerm;
+    result.integral[sampleIndex] = integralTerm;
+    result.derivative[sampleIndex] = derivativeTerm;
+    result.controllerSum[sampleIndex] = controllerSum;
+    result.actuator[sampleIndex] = appliedActuator;
+
+    if (gains.I > 0) {
+      if (ANTI_WINDUP_MODE === 'conditional') {
+        const windingUpHigh = controllerSum > level.actuatorMaximum && error > 0;
+        const windingUpLow = controllerSum < level.actuatorMinimum && error < 0;
+        if (!windingUpHigh && !windingUpLow) integralTerm += gains.I * error * timeStep;
+      } else {
+        integralTerm = Math.min(level.actuatorMaximum, Math.max(level.actuatorMinimum, integralTerm + gains.I * error * timeStep));
+      }
+    }
+
+    // Dead time: the plant sees the command from deadTimeSteps samples ago.
+    let actuatorAtPlant = appliedActuator;
+    if (deadTimeSteps > 0) {
+      actuatorAtPlant = actuatorDelayLine[delayLineWriteIndex];
+      actuatorDelayLine[delayLineWriteIndex] = appliedActuator;
+      delayLineWriteIndex = (delayLineWriteIndex + 1) % actuatorDelayLine.length;
+    }
+
+    // RK4 step (the disturbance is piecewise constant, sampled at the step start)
+    const disturbanceValue = disturbanceAt(level, timeSeconds);
+    plant.derivatives(state, actuatorAtPlant, disturbanceValue, slopeA);
+    for (let index = 0; index < stateSize; index++) stagingState[index] = state[index] + slopeA[index] * timeStep / 2;
+    plant.derivatives(stagingState, actuatorAtPlant, disturbanceValue, slopeB);
+    for (let index = 0; index < stateSize; index++) stagingState[index] = state[index] + slopeB[index] * timeStep / 2;
+    plant.derivatives(stagingState, actuatorAtPlant, disturbanceValue, slopeC);
+    for (let index = 0; index < stateSize; index++) stagingState[index] = state[index] + slopeC[index] * timeStep;
+    plant.derivatives(stagingState, actuatorAtPlant, disturbanceValue, slopeD);
+    for (let index = 0; index < stateSize; index++) {
+      state[index] += timeStep / 6 * (slopeA[index] + 2 * slopeB[index] + 2 * slopeC[index] + slopeD[index]);
+    }
+    if (plant.constrain) plant.constrain(state);
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Envelope (the channel the measured trace must stay inside)
+//   lower = min(goal over the last lagSeconds) - band
+//   upper = max(goal over the last lagSeconds) + band
+// band is loose while the goal moves (and for lagSeconds after), then narrows
+// linearly to tightBand over funnelSeconds. Disturbance events reopen it.
+// Also records which event (goal move or disturbance) each sample belongs to,
+// and its phase, so a failed run can be explained.
+// ---------------------------------------------------------------------------
+const ENVELOPE_PHASE = { BEFORE_FIRST_EVENT: 0, MOVING: 1, CATCHING_UP: 2, NARROWING: 3, SETTLED: 4 };
+
+function computeEnvelope(level, time, goal) {
+  const sampleCount = time.length;
+  const timeStep = level.timeStepSeconds;
+  const { lagSeconds, looseBand, tightBand, funnelSeconds } = level.envelope;
+  const lagSamples = Math.max(1, Math.round(lagSeconds / timeStep));
+  const lower = new Float64Array(sampleCount);
+  const upper = new Float64Array(sampleCount);
+  const bandHalfWidth = new Float64Array(sampleCount);
+  const eventIndexAt = new Int16Array(sampleCount).fill(-1);
+  const phaseAt = new Uint8Array(sampleCount);
+  const goalSpan = Math.abs(level.outputRange[1] - level.outputRange[0]);
+  const stillnessThreshold = goalSpan * 1e-7;
+  const disturbanceByIndex = new Map(level.disturbanceEvents.map((event) => [Math.round(event.timeSeconds / timeStep), event]));
+
+  const events = [];
+  let secondsSinceGoalMoved = Infinity;
+  let goalWasMovingLastSample = false;
+  const settleDeadlines = [];
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+    const goalMovedThisSample = sampleIndex > 0 && Math.abs(goal[sampleIndex] - goal[sampleIndex - 1]) > stillnessThreshold;
+    const disturbanceEvent = disturbanceByIndex.get(sampleIndex);
+    if (goalMovedThisSample) {
+      const currentEvent = events[events.length - 1];
+      if (!goalWasMovingLastSample || !currentEvent || currentEvent.kind !== 'goal') {
+        events.push({ kind: 'goal', startIndex: sampleIndex, fromValue: goal[sampleIndex - 1], toValue: goal[sampleIndex], label: '' });
+      } else {
+        currentEvent.toValue = goal[sampleIndex];
+      }
+    }
+    if (disturbanceEvent) {
+      events.push({ kind: 'disturbance', startIndex: sampleIndex, fromValue: goal[sampleIndex], toValue: goal[sampleIndex],
+        label: disturbanceEvent.label, disturbanceValue: disturbanceEvent.value });
+    }
+    goalWasMovingLastSample = goalMovedThisSample;
+    if (goalMovedThisSample || disturbanceEvent) {
+      secondsSinceGoalMoved = 0;
+    } else if (sampleIndex > 0) {
+      const previousSeconds = secondsSinceGoalMoved;
+      secondsSinceGoalMoved += timeStep;
+      const deadlineCrossing = lagSeconds + funnelSeconds;
+      if (previousSeconds < deadlineCrossing && secondsSinceGoalMoved >= deadlineCrossing) {
+        settleDeadlines.push(time[sampleIndex]);
+      }
+    }
+    let band;
+    if (secondsSinceGoalMoved <= lagSeconds) band = looseBand;
+    else {
+      const narrowingFraction = Math.min(1, (secondsSinceGoalMoved - lagSeconds) / funnelSeconds);
+      band = looseBand + (tightBand - looseBand) * narrowingFraction;
+    }
+    let windowMinimum = Infinity;
+    let windowMaximum = -Infinity;
+    for (let windowIndex = Math.max(0, sampleIndex - lagSamples); windowIndex <= sampleIndex; windowIndex++) {
+      if (goal[windowIndex] < windowMinimum) windowMinimum = goal[windowIndex];
+      if (goal[windowIndex] > windowMaximum) windowMaximum = goal[windowIndex];
+    }
+    lower[sampleIndex] = windowMinimum - band;
+    upper[sampleIndex] = windowMaximum + band;
+    bandHalfWidth[sampleIndex] = band;
+    eventIndexAt[sampleIndex] = events.length - 1;
+    if (events.length === 0) phaseAt[sampleIndex] = ENVELOPE_PHASE.BEFORE_FIRST_EVENT;
+    else if (secondsSinceGoalMoved === 0) phaseAt[sampleIndex] = ENVELOPE_PHASE.MOVING;
+    else if (secondsSinceGoalMoved <= lagSeconds) phaseAt[sampleIndex] = ENVELOPE_PHASE.CATCHING_UP;
+    else if (secondsSinceGoalMoved < lagSeconds + funnelSeconds) phaseAt[sampleIndex] = ENVELOPE_PHASE.NARROWING;
+    else phaseAt[sampleIndex] = ENVELOPE_PHASE.SETTLED;
+  }
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+    events[eventIndex].endIndex = eventIndex + 1 < events.length ? events[eventIndex + 1].startIndex : sampleCount;
+  }
+  return { lower, upper, bandHalfWidth, settleDeadlines, events, eventIndexAt, phaseAt };
+}
+
+// ---------------------------------------------------------------------------
+// Scoring
+// ---------------------------------------------------------------------------
+function evaluateRun(level, run, envelope) {
+  const { measured, goal, actuator, controllerSum, time, timeStep, sampleCount } = run;
+  let firstViolationIndex = -1;
+  let violationSide = null;
+  const violationMask = new Uint8Array(sampleCount);
+  let violationCount = 0;
+  let integratedAbsoluteError = 0;
+  let actuatorTravel = 0;
+  let actuatorSquaredSum = 0;
+  let saturatedSeconds = 0;
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+    const value = measured[sampleIndex];
+    const outside = value < envelope.lower[sampleIndex] ? 'low' : value > envelope.upper[sampleIndex] ? 'high' : null;
+    if (outside) {
+      violationMask[sampleIndex] = 1;
+      violationCount++;
+      if (firstViolationIndex < 0) { firstViolationIndex = sampleIndex; violationSide = outside; }
+    }
+    integratedAbsoluteError += Math.abs(goal[sampleIndex] - value) * timeStep;
+    if (sampleIndex > 0) actuatorTravel += Math.abs(actuator[sampleIndex] - actuator[sampleIndex - 1]);
+    actuatorSquaredSum += actuator[sampleIndex] * actuator[sampleIndex];
+    if (controllerSum[sampleIndex] > level.actuatorMaximum || controllerSum[sampleIndex] < level.actuatorMinimum) {
+      saturatedSeconds += timeStep;
+    }
+  }
+
+  // Overshoot and settling relative to the last goal change.
+  const finalGoal = goal[sampleCount - 1];
+  let lastChangeIndex = 0;
+  for (let sampleIndex = sampleCount - 1; sampleIndex > 0; sampleIndex--) {
+    if (goal[sampleIndex] !== goal[sampleIndex - 1]) { lastChangeIndex = sampleIndex; break; }
+  }
+  // For profiles that move (ramps, S-curves), the "change" starts where motion began.
+  let motionStartIndex = lastChangeIndex;
+  while (motionStartIndex > 1 && goal[motionStartIndex - 1] !== goal[motionStartIndex - 2]) motionStartIndex--;
+  const goalBefore = goal[Math.max(0, motionStartIndex - 1)];
+  const finalStepSize = finalGoal - goalBefore;
+  let overshootAmount = 0;
+  if (Math.abs(finalStepSize) > 1e-9) {
+    for (let sampleIndex = motionStartIndex; sampleIndex < sampleCount; sampleIndex++) {
+      const beyond = (run.trueOutput[sampleIndex] - finalGoal) * Math.sign(finalStepSize);
+      if (beyond > overshootAmount) overshootAmount = beyond;
+    }
+  }
+  const overshootPercent = Math.abs(finalStepSize) > 1e-9 ? 100 * overshootAmount / Math.abs(finalStepSize) : 0;
+  const tightBand = level.envelope.tightBand;
+  let lastOutsideTightIndex = -1;
+  for (let sampleIndex = sampleCount - 1; sampleIndex >= lastChangeIndex; sampleIndex--) {
+    if (Math.abs(measured[sampleIndex] - finalGoal) > tightBand) { lastOutsideTightIndex = sampleIndex; break; }
+  }
+  const settledAtEnd = lastOutsideTightIndex < sampleCount - 1;
+  const settleSeconds = settledAtEnd
+    ? Math.max(0, time[Math.max(lastOutsideTightIndex + 1, lastChangeIndex)] - time[lastChangeIndex])
+    : null;
+
+  const actuatorRange = level.actuatorMaximum - level.actuatorMinimum;
+  return {
+    passed: firstViolationIndex < 0,
+    firstViolationIndex, violationSide, violationMask, violationCount,
+    integratedAbsoluteError,
+    actuatorTravelPercent: 100 * actuatorTravel / actuatorRange,
+    actuatorRmsPercent: 100 * Math.sqrt(actuatorSquaredSum / sampleCount) /
+      Math.max(Math.abs(level.actuatorMinimum), Math.abs(level.actuatorMaximum)),
+    saturatedSeconds,
+    overshootPercent,
+    overshootAmount,
+    settleSeconds,
+    lastChangeTime: time[lastChangeIndex],
+    finalError: finalGoal - measured[sampleCount - 1],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Star criteria: each level names two metrics; every one met adds a star.
+// ---------------------------------------------------------------------------
+const STAR_METRICS = {
+  iae: { label: 'Tracking error', read: (evaluation) => evaluation.integratedAbsoluteError, unitSuffix: (level) => `${level.outputUnit === '°' ? '°' : ' ' + level.outputUnit}·s` },
+  overshoot: { label: 'Overshoot', read: (evaluation) => evaluation.overshootAmount, unitSuffix: (level) => level.outputUnit === '°' ? '°' : ' ' + level.outputUnit },
+  settle: { label: 'Settling time', read: (evaluation) => evaluation.settleSeconds === null ? Infinity : evaluation.settleSeconds, unitSuffix: () => ' s' },
+  travel: { label: 'Actuator travel', read: (evaluation) => evaluation.actuatorTravelPercent, unitSuffix: () => ' %' },
+  rms: { label: 'Motor effort (RMS)', read: (evaluation) => evaluation.actuatorRmsPercent, unitSuffix: () => ' %' },
+};
+function scoreStars(level, evaluation) {
+  if (!evaluation.passed) return { stars: 0, criteria: level.starCriteria.map((criterion) => ({ ...criterion, value: STAR_METRICS[criterion.metric].read(evaluation), met: false })) };
+  const criteria = level.starCriteria.map((criterion) => {
+    const value = STAR_METRICS[criterion.metric].read(evaluation);
+    return { ...criterion, value, met: value <= criterion.limit };
+  });
+  return { stars: 1 + criteria.filter((criterion) => criterion.met).length, criteria };
+}
+
+// ---------------------------------------------------------------------------
+// Coaching: explain a run in plain words and suggest which knob to turn.
+// ---------------------------------------------------------------------------
+function formatQuantity(value, unit) {
+  const magnitude = Math.abs(value);
+  const digits = magnitude >= 100 ? 0 : magnitude >= 10 ? 1 : magnitude >= 1 ? 1 : magnitude >= 0.1 ? 2 : 3;
+  const text = magnitude.toFixed(digits);
+  return unit === '°' ? `${text}°` : `${text} ${unit}`;
+}
+function formatSeconds(seconds) {
+  return `${seconds.toFixed(seconds >= 10 ? 1 : 2)} s`;
+}
+function joinAlternatives(phrases) {
+  if (phrases.length <= 1) return phrases.join('');
+  return `${phrases.slice(0, -1).join(', ')} or ${phrases[phrases.length - 1]}`;
+}
+function capitalise(text) { return text.charAt(0).toUpperCase() + text.slice(1); }
+
+// Counts how many times the output swings across the goal (with hysteresis) and
+// whether successive swings grow.
+function analyseSwings(output, goal, startIndex, endIndex, hysteresis) {
+  let crossings = 0;
+  let currentSign = 0;
+  let currentPeak = 0;
+  const peaks = [];
+  for (let sampleIndex = startIndex; sampleIndex < endIndex; sampleIndex++) {
+    const error = output[sampleIndex] - goal[sampleIndex];
+    const sign = error > hysteresis ? 1 : error < -hysteresis ? -1 : 0;
+    if (sign !== 0 && sign !== currentSign) {
+      if (currentSign !== 0) { crossings++; peaks.push(currentPeak); }
+      currentSign = sign;
+      currentPeak = 0;
+    }
+    currentPeak = Math.max(currentPeak, Math.abs(error));
+  }
+  peaks.push(currentPeak);
+  const swingPeaks = peaks.slice(1); // the first peak is just the approach
+  let growing = false;
+  if (swingPeaks.length >= 3) {
+    const early = swingPeaks[0];
+    const late = Math.max(swingPeaks[swingPeaks.length - 1], swingPeaks[swingPeaks.length - 2]);
+    growing = late > early * 1.15;
+  }
+  return { crossings, growing, peaks: swingPeaks };
+}
+
+function diagnoseRun(level, run, envelope, evaluation, gains) {
+  const output = run.trueOutput;
+  const goal = run.goal;
+  const sampleCount = run.sampleCount;
+  const timeStep = run.timeStep;
+  const unit = level.outputUnit;
+  const { tightBand, lagSeconds, funnelSeconds } = level.envelope;
+  const canTurn = (term) => level.unlocked[term];
+  const hysteresis = Math.max(tightBand * 0.5, 1e-9);
+
+  if (evaluation.passed) {
+    return { kind: 'pass', title: 'Inside the channel',
+      detail: `Finished ${formatQuantity(evaluation.finalError, unit)} from the goal.` };
+  }
+
+  const violationIndex = evaluation.firstViolationIndex;
+  const violationTime = run.time[violationIndex];
+  const eventIndex = envelope.eventIndexAt[violationIndex];
+  const event = eventIndex >= 0 ? envelope.events[eventIndex] : null;
+  const phase = envelope.phaseAt[violationIndex];
+  const segmentStart = event ? event.startIndex : 0;
+  const segmentEnd = event ? event.endIndex : sampleCount;
+  const errorAtViolation = goal[violationIndex] - output[violationIndex];
+  const direction = event && event.kind === 'goal' ? Math.sign(event.toValue - event.fromValue) : 0;
+  const pushedPastGoal = direction !== 0 &&
+    ((direction > 0 && evaluation.violationSide === 'high') || (direction < 0 && evaluation.violationSide === 'low'));
+  const disturbance = event && event.kind === 'disturbance' && event.label ? event.label.toLowerCase() : null;
+  const afterDisturbance = (sentence) => disturbance ? `After the ${disturbance}, ${sentence}` : capitalise(sentence);
+
+  // Which term is doing most of the work? Used to tell "too much D" from "too little D".
+  let proportionalEnergy = 0, derivativeEnergy = 0;
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+    proportionalEnergy += run.proportional[sampleIndex] ** 2;
+    derivativeEnergy += run.derivative[sampleIndex] ** 2;
+  }
+  const derivativeDominates = derivativeEnergy > proportionalEnergy * 1.5;
+
+  // Maglev: the ball can leave the magnet's reach or snap up to it.
+  if (PLANTS[level.plantKey].constrain) {
+    const floor = MAGLEV.floorHeightMillimeters + 0.01;
+    const ceiling = MAGLEV.magnetFaceHeightMillimeters - 0.01;
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+      const value = output[sampleIndex];
+      if (value <= floor || value >= ceiling) {
+        const fell = value <= floor;
+        const bouncing = analyseSwings(output, goal, 0, sampleIndex, tightBand).crossings >= 2;
+        let suggestion;
+        if (!bouncing) suggestion = 'P is too weak to catch it. Raise P until the ball stops running away.';
+        else if (derivativeDominates) suggestion = 'D is overreacting. Lower D a little.';
+        else suggestion = `Each bounce grew until it escaped. ${gains.D > 0 ? 'More D' : 'Add D'} to damp it.`;
+        return {
+          kind: fell ? 'dropped' : 'stuck',
+          title: fell ? 'Dropped' : 'Stuck to the magnet',
+          detail: `The ball ${fell ? 'fell' : 'jumped to the magnet'} at ${formatSeconds(run.time[sampleIndex])}.`,
+          suggestion,
+        };
+      }
+    }
+  }
+
+  const wholeRunSwings = analyseSwings(output, goal, segmentStart, sampleCount, hysteresis);
+  if (wholeRunSwings.growing && wholeRunSwings.crossings >= 4) {
+    const fixes = [];
+    if (derivativeDominates) fixes.push('lower D');
+    if (gains.P > 0) fixes.push('lower P');
+    if (gains.I > 0) fixes.push('lower I');
+    if (canTurn('D') && !derivativeDominates) fixes.push(gains.D > 0 ? 'add a little more D' : 'add D');
+    return { kind: 'unstable', title: 'Unstable',
+      detail: afterDisturbance('each swing is bigger than the last.'),
+      suggestion: `${capitalise(joinAlternatives(fixes))}.` };
+  }
+
+  if (pushedPastGoal) {
+    const beyondGoal = Math.abs(output[violationIndex] - goal[violationIndex]);
+    const fixes = [];
+    if (canTurn('D')) fixes.push(gains.D > 0 ? 'more D to brake earlier' : 'add D to brake earlier');
+    if (gains.P > 0) fixes.push('lower P');
+    if (gains.I > 0) fixes.push('lower I');
+    return { kind: 'overshoot', title: 'Overshoot',
+      detail: `Went ${formatQuantity(beyondGoal, unit)} past the goal at ${formatSeconds(violationTime)}.`,
+      suggestion: `${capitalise(joinAlternatives(fixes))}.` };
+  }
+
+  // Has the output reached the goal since this event began?
+  let reachedGoal = false;
+  const startingSide = Math.sign(goal[segmentStart] - output[segmentStart]) || Math.sign(errorAtViolation);
+  for (let sampleIndex = segmentStart; sampleIndex <= violationIndex; sampleIndex++) {
+    if (Math.sign(goal[sampleIndex] - output[sampleIndex]) === -startingSide &&
+        Math.abs(goal[sampleIndex] - output[sampleIndex]) > hysteresis) { reachedGoal = true; break; }
+  }
+  const secondsIntoEvent = (violationIndex - segmentStart) * timeStep;
+  const atChannelClose = Math.abs(secondsIntoEvent - lagSeconds) < Math.max(0.15 * funnelSeconds, 3 * timeStep);
+
+  if (!disturbance && !reachedGoal && (phase === ENVELOPE_PHASE.MOVING || phase === ENVELOPE_PHASE.CATCHING_UP || atChannelClose)) {
+    const gap = Math.abs(errorAtViolation);
+    const goalStillMoving = phase === ENVELOPE_PHASE.MOVING;
+    const fixes = ['raise P'];
+    if (canTurn('I') && (goalStillMoving || gains.I > 0)) fixes.push(gains.I > 0 ? 'raise I' : 'add I to catch up');
+    if (canTurn('D') && gains.D > 0) fixes.push('ease off D');
+    return { kind: 'slow', title: goalStillMoving ? 'Falling behind' : 'Too slow',
+      detail: goalStillMoving
+        ? `Trailed the moving goal by ${formatQuantity(gap, unit)} at ${formatSeconds(violationTime)}.`
+        : `Still ${formatQuantity(gap, unit)} short when the channel closed at ${formatSeconds(violationTime)}.`,
+      suggestion: `${capitalise(joinAlternatives(fixes))}.` };
+  }
+
+  // Later in the event: is it swinging, or sitting off to one side?
+  const windowEnd = Math.min(segmentEnd, violationIndex + Math.round((funnelSeconds + lagSeconds) / timeStep));
+  let errorSum = 0, errorCount = 0;
+  for (let sampleIndex = violationIndex; sampleIndex < windowEnd; sampleIndex++) { errorSum += goal[sampleIndex] - output[sampleIndex]; errorCount++; }
+  const meanError = errorCount ? errorSum / errorCount : errorAtViolation;
+  let swingSum = 0;
+  for (let sampleIndex = violationIndex; sampleIndex < windowEnd; sampleIndex++) swingSum += Math.abs(goal[sampleIndex] - output[sampleIndex] - meanError);
+  const swingAmplitude = errorCount ? swingSum / errorCount : 0;
+  const swingsAroundGoal = analyseSwings(output, goal, segmentStart, windowEnd, hysteresis).crossings >= 2;
+
+  if (swingsAroundGoal && swingAmplitude > Math.abs(meanError) * 0.8) {
+    const fixes = [];
+    if (derivativeDominates) fixes.push('lower D');
+    else if (canTurn('D')) fixes.push(gains.D > 0 ? 'more D' : 'add D');
+    if (gains.P > 0) fixes.push('lower P');
+    if (gains.I > 0) fixes.push('lower I');
+    return { kind: 'ringing', title: 'Still ringing',
+      detail: afterDisturbance(`it was still swinging around the goal at ${formatSeconds(violationTime)}.`),
+      suggestion: `${capitalise(joinAlternatives(fixes))} to calm it.` };
+  }
+
+  const gap = Math.abs(errorAtViolation);
+  const belowOrAbove = errorAtViolation > 0 ? 'below' : 'above';
+  if (disturbance && event.disturbanceValue !== 0) {
+    const fixes = [];
+    if (canTurn('I')) fixes.push(gains.I > 0 ? 'more I' : 'add I');
+    fixes.push('raise P');
+    return { kind: 'disturbance', title: `Pushed out by the ${disturbance}`,
+      detail: `It sat ${formatQuantity(gap, unit)} ${belowOrAbove} the goal at ${formatSeconds(violationTime)}.`,
+      suggestion: `${capitalise(joinAlternatives(fixes))} to push back against a steady load.` };
+  }
+  if (!canTurn('I')) {
+    return { kind: 'offset', title: 'Not settled',
+      detail: afterDisturbance(`it was ${formatQuantity(gap, unit)} ${belowOrAbove} the goal at ${formatSeconds(violationTime)}.`),
+      suggestion: canTurn('D') && gains.D > 0 ? 'Raise P, or ease off D.' : 'Raise P.' };
+  }
+  if (gains.I === 0) {
+    return { kind: 'offset', title: 'Stuck short',
+      detail: afterDisturbance(`it settled ${formatQuantity(gap, unit)} ${belowOrAbove} the goal.`),
+      suggestion: 'P alone leaves a steady error. Add I to wipe it out.' };
+  }
+  return { kind: 'creeping', title: 'Too slow to settle',
+    detail: afterDisturbance(`it was still ${formatQuantity(gap, unit)} off at ${formatSeconds(violationTime)}, creeping in.`),
+    suggestion: 'Raise I to close the gap sooner.' };
+}
+
+</script>
+<script>
+// ============================================================================
+// Control System Tuner — game interface
+// ============================================================================
+(() => {
+  'use strict';
+
+  // ---------------------------------------------------------------------------
+  // Interface parameters
+  // ---------------------------------------------------------------------------
+  const STORAGE_KEY = 'control-system-tuner.v1';
+  const RUN_ANIMATION_MILLISECONDS = 2600;
+  const RESULT_DELAY_MILLISECONDS = 260;
+  const NUDGE_STEP_POSITIONS = 5;
+  const NUDGE_REPEAT_DELAY_MILLISECONDS = 380;
+  const NUDGE_REPEAT_INTERVAL_MILLISECONDS = 55;
+  const CHART_MARGIN_LEFT = 42;
+  const CHART_MARGIN_RIGHT = 10;
+  const CHART_MARGIN_TOP = 22;
+  const CHART_MARGIN_BOTTOM = 20;
+  const CHART_PANEL_GAP = 18;
+  const CHART_RESPONSE_SHARE = 0.6;
+  const MINI_CHART_SAMPLES = 260;
+  const TERM_KEYS = ['P', 'I', 'D'];
+  const TERM_NAMES = { P: 'Proportional', I: 'Integral', D: 'Derivative' };
+  const TERM_TOKEN = { P: '--term-p', I: '--term-i', D: '--term-d' };
+  const PALETTE_TOKENS = ['--bg', '--surface', '--paper', '--grid-minor', '--grid-major', '--ink', '--ink-soft', '--ink-faint',
+    '--rule', '--pen', '--ghost', '--wall-line', '--wall-fill', '--fail', '--pass', '--term-p', '--term-i', '--term-d', '--star'];
+  const FIRST_LEVEL_WITH_TERM = {
+    P: LEVELS.findIndex((level) => level.unlocked.P),
+    I: LEVELS.findIndex((level) => level.unlocked.I),
+    D: LEVELS.findIndex((level) => level.unlocked.D),
+  };
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  // ---------------------------------------------------------------------------
+  // Saved progress (per browser; the page works without it)
+  // ---------------------------------------------------------------------------
+  function loadProgress() {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (error) {
+      return {};
+    }
+  }
+  const progress = Object.assign({ bestStars: {}, sliderPositions: {}, attempts: {} }, loadProgress());
+  function saveProgress() {
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress)); } catch (error) { /* storage unavailable */ }
+  }
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+  const state = {
+    screen: 'levels',
+    levelIndex: 0,
+    sliderPositions: { P: 0, I: 0, D: 0 },
+    visibleTerms: { P: true, I: true, D: true, S: true },
+    timeAxis: null,
+    goalTrace: null,
+    envelope: null,
+    run: null,
+    previousRun: null,
+    animation: null,
+    cursorIndex: null,
+    attempts: 0,
+  };
+  const currentLevel = () => LEVELS[state.levelIndex];
+
+  // ---------------------------------------------------------------------------
+  // Elements
+  // ---------------------------------------------------------------------------
+  const byId = (id) => document.getElementById(id);
+  const levelsScreen = byId('levels-screen');
+  const playScreen = byId('play-screen');
+  const chapterList = byId('chapter-list');
+  const starTotal = byId('star-total');
+  const chartFrame = byId('chart-frame');
+  const chartCanvas = byId('chart');
+  const chartContext = chartCanvas.getContext('2d');
+  const readout = byId('readout');
+  const gainRowsContainer = byId('gain-rows');
+  const runButton = byId('run-button');
+  const attemptsLabel = byId('attempts');
+  const resultSheet = byId('result');
+  const briefOverlay = byId('brief');
+
+  // ---------------------------------------------------------------------------
+  // Formatting helpers
+  // ---------------------------------------------------------------------------
+  function withUnit(text, unit) { return unit === '°' ? `${text}°` : `${text} ${unit}`; }
+  function formatGain(value) {
+    if (!(value > 0)) return 'off';
+    return String(Number(value.toPrecision(3)));
+  }
+  function formatSignificant(value) {
+    if (!Number.isFinite(value)) return '—';
+    if (value === 0) return '0';
+    const magnitude = Math.abs(value);
+    if (magnitude >= 1000) return value.toFixed(0);
+    return String(Number(value.toPrecision(3)));
+  }
+  function outputDecimals(level) {
+    const span = Math.abs(level.outputRange[1] - level.outputRange[0]);
+    return span <= 10 ? 2 : span <= 100 ? 1 : 0;
+  }
+  function formatOutput(level, value) { return withUnit(value.toFixed(outputDecimals(level)), level.outputUnit); }
+  function formatSignedTerm(value) {
+    const text = formatSignificant(value);
+    return value < 0 ? text.replace('-', '−') : text;
+  }
+  function unitRatio(numerator, denominator) {
+    const wrap = (unit) => (unit.includes('/') ? `(${unit})` : unit);
+    return `${numerator}/${wrap(denominator)}`;
+  }
+  function gainUnit(level, term) {
+    const actuator = level.actuatorUnit;
+    const output = level.outputUnit;
+    if (term === 'P') return unitRatio(actuator, output);
+    if (term === 'I') return `${actuator}/(${output}·s)`;
+    return `${actuator}·s/${output.includes('/') ? `(${output})` : output}`;
+  }
+  function formatMetric(level, metric, value) {
+    if (!Number.isFinite(value)) return '—';
+    if (metric === 'iae') {
+      const text = value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+      return level.outputUnit === '°' ? `${text}°·s` : `${text} ${level.outputUnit}·s`;
+    }
+    if (metric === 'overshoot') {
+      const span = Math.abs(level.outputRange[1] - level.outputRange[0]);
+      const decimals = span <= 10 ? 2 : span <= 100 ? 1 : 1;
+      return withUnit(value.toFixed(value < 0.1 ? 2 : decimals), level.outputUnit);
+    }
+    if (metric === 'settle') return `${value.toFixed(1)} s`;
+    return `${value.toFixed(0)} %`;
+  }
+  function formatLimit(level, metric, limit) {
+    const text = String(Number(limit.toPrecision(3)));
+    if (metric === 'iae') return level.outputUnit === '°' ? `${text}°·s` : `${text} ${level.outputUnit}·s`;
+    if (metric === 'overshoot') return withUnit(text, level.outputUnit);
+    if (metric === 'settle') return `${text} s`;
+    return `${text} %`;
+  }
+  function criterionText(level, criterion) {
+    const metric = STAR_METRICS[criterion.metric];
+    const limitText = formatLimit(level, criterion.metric, criterion.limit);
+    if (criterion.metric === 'settle') return `Settle in ${limitText} or less`;
+    if (criterion.metric === 'overshoot') return `Overshoot ${limitText} or less`;
+    return `${metric.label} ${limitText} or less`;
+  }
+  function starString(count, total = 3) {
+    let html = '';
+    for (let index = 0; index < total; index++) html += `<span class="${index < count ? 'on' : ''}">★</span>`;
+    return html;
+  }
+  function twoDigits(number) { return String(number).padStart(2, '0'); }
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[character]));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Theme palette for canvas drawing
+  // ---------------------------------------------------------------------------
+  let palette = {};
+  let hatchPattern = null;
+  let hatchPatternRatio = 0;
+  function refreshPalette() {
+    const styles = getComputedStyle(document.documentElement);
+    palette = {};
+    for (const token of PALETTE_TOKENS) palette[token] = styles.getPropertyValue(token).trim();
+    hatchPattern = null;
+  }
+  function getHatchPattern(context, pixelRatio) {
+    if (hatchPattern && hatchPatternRatio === pixelRatio) return hatchPattern;
+    const tileSize = Math.round(7 * pixelRatio);
+    const tile = document.createElement('canvas');
+    tile.width = tileSize;
+    tile.height = tileSize;
+    const tileContext = tile.getContext('2d');
+    tileContext.fillStyle = palette['--wall-fill'];
+    tileContext.fillRect(0, 0, tileSize, tileSize);
+    tileContext.strokeStyle = palette['--wall-line'];
+    tileContext.lineWidth = Math.max(1, pixelRatio * 0.9);
+    tileContext.beginPath();
+    tileContext.moveTo(-1, tileSize + 1);
+    tileContext.lineTo(tileSize + 1, -1);
+    tileContext.moveTo(-1, 1);
+    tileContext.lineTo(1, -1);
+    tileContext.moveTo(tileSize - 1, tileSize + 1);
+    tileContext.lineTo(tileSize + 1, tileSize - 1);
+    tileContext.stroke();
+    hatchPattern = context.createPattern(tile, 'repeat');
+    hatchPatternRatio = pixelRatio;
+    return hatchPattern;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Goal, time axis and envelope for a level (no simulation needed)
+  // ---------------------------------------------------------------------------
+  function buildGoalAndEnvelope(level, timeStepSeconds) {
+    const levelForSampling = timeStepSeconds ? Object.assign({}, level, { timeStepSeconds }) : level;
+    const timeStep = levelForSampling.timeStepSeconds;
+    const sampleCount = Math.round(level.durationSeconds / timeStep) + 1;
+    const goalAt = makeGoalFunction(level.goalKeyframes);
+    const time = new Float64Array(sampleCount);
+    const goal = new Float64Array(sampleCount);
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+      time[sampleIndex] = sampleIndex * timeStep;
+      goal[sampleIndex] = goalAt(time[sampleIndex]);
+    }
+    return { time, goal, envelope: computeEnvelope(levelForSampling, time, goal) };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Nice axis ticks
+  // ---------------------------------------------------------------------------
+  function niceStep(rawStep) {
+    const exponent = Math.floor(Math.log10(rawStep));
+    const fraction = rawStep / Math.pow(10, exponent);
+    const niceFraction = fraction < 1.5 ? 1 : fraction < 3 ? 2 : fraction < 7 ? 5 : 10;
+    return niceFraction * Math.pow(10, exponent);
+  }
+  function niceTicks(minimum, maximum, desiredCount) {
+    const step = niceStep((maximum - minimum) / Math.max(1, desiredCount));
+    const ticks = [];
+    for (let value = Math.ceil(minimum / step - 1e-9) * step; value <= maximum + step * 1e-9; value += step) {
+      ticks.push(Math.abs(value) < step * 1e-9 ? 0 : value);
+    }
+    return { ticks, step };
+  }
+  function formatTick(value, step) {
+    const decimals = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step) - 1e-9));
+    return value.toFixed(decimals).replace('-', '−');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Trace decimation: two points per pixel column, keeping peaks and order
+  // ---------------------------------------------------------------------------
+  function decimateTrace(values, sampleCount, columnCount) {
+    const sampleIndices = [];
+    const decimatedValues = [];
+    const samplesPerColumn = sampleCount / columnCount;
+    if (samplesPerColumn <= 2) {
+      for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) { sampleIndices.push(sampleIndex); decimatedValues.push(values[sampleIndex]); }
+      return { sampleIndices, values: decimatedValues };
+    }
+    for (let column = 0; column < columnCount; column++) {
+      const from = Math.floor(column * samplesPerColumn);
+      const to = Math.min(sampleCount, Math.floor((column + 1) * samplesPerColumn));
+      if (to <= from) continue;
+      let minimumValue = Infinity, maximumValue = -Infinity, minimumIndex = from, maximumIndex = from;
+      for (let sampleIndex = from; sampleIndex < to; sampleIndex++) {
+        const value = values[sampleIndex];
+        if (value < minimumValue) { minimumValue = value; minimumIndex = sampleIndex; }
+        if (value > maximumValue) { maximumValue = value; maximumIndex = sampleIndex; }
+      }
+      if (minimumIndex <= maximumIndex) {
+        sampleIndices.push(minimumIndex); decimatedValues.push(minimumValue);
+        if (maximumIndex !== minimumIndex) { sampleIndices.push(maximumIndex); decimatedValues.push(maximumValue); }
+      } else {
+        sampleIndices.push(maximumIndex); decimatedValues.push(maximumValue);
+        sampleIndices.push(minimumIndex); decimatedValues.push(minimumValue);
+      }
+    }
+    if (sampleIndices[sampleIndices.length - 1] !== sampleCount - 1) {
+      sampleIndices.push(sampleCount - 1); decimatedValues.push(values[sampleCount - 1]);
+    }
+    return { sampleIndices, values: decimatedValues };
+  }
+
+  // Decimated copies are cached per run and per chart width.
+  const decimationCache = new WeakMap();
+  function decimatedTraces(source, keys, columnCount) {
+    let entry = decimationCache.get(source);
+    if (!entry || entry.columnCount !== columnCount) {
+      entry = { columnCount, traces: {} };
+      decimationCache.set(source, entry);
+    }
+    for (const key of keys) {
+      if (!entry.traces[key]) entry.traces[key] = decimateTrace(source[key], source.sampleCount || source[key].length, columnCount);
+    }
+    return entry.traces;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chart
+  // ---------------------------------------------------------------------------
+  let chartWidth = 0, chartHeight = 0, chartPixelRatio = 1;
+  function resizeChart() {
+    const rectangle = chartFrame.getBoundingClientRect();
+    if (rectangle.width < 2 || rectangle.height < 2) return;
+    chartPixelRatio = Math.min(3, window.devicePixelRatio || 1);
+    chartWidth = rectangle.width;
+    chartHeight = rectangle.height;
+    chartCanvas.width = Math.round(chartWidth * chartPixelRatio);
+    chartCanvas.height = Math.round(chartHeight * chartPixelRatio);
+    drawChart();
+  }
+
+  function chartLayout() {
+    const left = CHART_MARGIN_LEFT;
+    const right = Math.max(left + 10, chartWidth - CHART_MARGIN_RIGHT);
+    const top = CHART_MARGIN_TOP;
+    const bottom = Math.max(top + 40, chartHeight - CHART_MARGIN_BOTTOM);
+    const responseHeight = Math.round((bottom - top - CHART_PANEL_GAP) * CHART_RESPONSE_SHARE);
+    return {
+      left, right, top, bottom,
+      response: { top, bottom: top + responseHeight },
+      controller: { top: top + responseHeight + CHART_PANEL_GAP, bottom },
+    };
+  }
+
+  function drawPanelGrid(context, layout, panel, valueRange, desiredTicks, timeTicks) {
+    const { left, right } = layout;
+    const toY = (value) => panel.bottom - (value - valueRange[0]) / (valueRange[1] - valueRange[0]) * (panel.bottom - panel.top);
+    context.fillStyle = palette['--paper'];
+    context.fillRect(left, panel.top, right - left, panel.bottom - panel.top);
+    const { ticks, step } = niceTicks(valueRange[0], valueRange[1], desiredTicks);
+    context.lineWidth = 1;
+    context.strokeStyle = palette['--grid-minor'];
+    context.beginPath();
+    const minorValueStep = step / 5;
+    for (let value = Math.ceil(valueRange[0] / minorValueStep) * minorValueStep; value <= valueRange[1]; value += minorValueStep) {
+      const y = Math.round(toY(value)) + 0.5;
+      context.moveTo(left, y); context.lineTo(right, y);
+    }
+    const minorTimeStep = timeTicks.step / 5;
+    for (let time = 0; time <= timeTicks.maximum + 1e-9; time += minorTimeStep) {
+      const x = Math.round(timeTicks.toX(time)) + 0.5;
+      context.moveTo(x, panel.top); context.lineTo(x, panel.bottom);
+    }
+    context.stroke();
+    context.strokeStyle = palette['--grid-major'];
+    context.beginPath();
+    for (const value of ticks) {
+      const y = Math.round(toY(value)) + 0.5;
+      context.moveTo(left, y); context.lineTo(right, y);
+    }
+    for (const time of timeTicks.ticks) {
+      const x = Math.round(timeTicks.toX(time)) + 0.5;
+      context.moveTo(x, panel.top); context.lineTo(x, panel.bottom);
+    }
+    context.stroke();
+    context.fillStyle = palette['--ink-faint'];
+    context.font = `10px ${getComputedStyle(document.body).getPropertyValue('--font-data') || 'monospace'}`;
+    context.textAlign = 'right';
+    context.textBaseline = 'middle';
+    for (const value of ticks) {
+      const y = toY(value);
+      if (y < panel.top + 4 || y > panel.bottom - 4) continue;
+      context.fillText(formatTick(value, step), left - 6, y);
+    }
+    return toY;
+  }
+
+  function strokeDecimated(context, decimated, toX, toY, timeStep, lastIndex) {
+    const { sampleIndices, values } = decimated;
+    let started = false;
+    context.beginPath();
+    for (let pointIndex = 0; pointIndex < sampleIndices.length; pointIndex++) {
+      const sampleIndex = sampleIndices[pointIndex];
+      if (sampleIndex > lastIndex) break;
+      const x = toX(sampleIndex * timeStep);
+      const y = toY(values[pointIndex]);
+      if (!started) { context.moveTo(x, y); started = true; } else context.lineTo(x, y);
+    }
+    context.stroke();
+  }
+
+  // The channel edges per pixel column (narrowest channel within each column).
+  let wallCache = null;
+  function wallColumnsFor(wallColumns) {
+    if (wallCache && wallCache.wallColumns === wallColumns && wallCache.envelope === state.envelope) return wallCache;
+    const upperByColumn = new Float64Array(wallColumns).fill(Infinity);
+    const lowerByColumn = new Float64Array(wallColumns).fill(-Infinity);
+    const sampleCount = state.envelopeSource.sampleCount;
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+      const column = Math.min(wallColumns - 1, Math.floor(sampleIndex / (sampleCount - 1) * wallColumns));
+      if (state.envelope.upper[sampleIndex] < upperByColumn[column]) upperByColumn[column] = state.envelope.upper[sampleIndex];
+      if (state.envelope.lower[sampleIndex] > lowerByColumn[column]) lowerByColumn[column] = state.envelope.lower[sampleIndex];
+    }
+    wallCache = { wallColumns, upperByColumn, lowerByColumn, envelope: state.envelope };
+    return wallCache;
+  }
+
+  function drawChart() {
+    if (!chartWidth || !state.envelope) return;
+    const context = chartContext;
+    const level = currentLevel();
+    const layout = chartLayout();
+    const { left, right } = layout;
+    const plotWidth = right - left;
+    const timeStep = level.timeStepSeconds;
+    const duration = level.durationSeconds;
+    const toX = (time) => left + (time / duration) * plotWidth;
+    const xTicks = niceTicks(0, duration, Math.max(3, Math.round(plotWidth / 70)));
+    const timeTicks = { ticks: xTicks.ticks, step: xTicks.step, maximum: duration, toX };
+    const columnCount = Math.max(16, Math.round(plotWidth * Math.min(2, chartPixelRatio)));
+    const dataFont = getComputedStyle(document.body).getPropertyValue('--font-data') || 'monospace';
+    const bodyFont = getComputedStyle(document.body).getPropertyValue('--font-body') || 'sans-serif';
+
+    context.setTransform(chartPixelRatio, 0, 0, chartPixelRatio, 0, 0);
+    context.clearRect(0, 0, chartWidth, chartHeight);
+    context.fillStyle = palette['--paper'];
+    context.fillRect(0, 0, chartWidth, chartHeight);
+
+    const run = state.run;
+    const animating = Boolean(state.animation);
+    const headIndex = run ? (animating ? state.animation.headIndex : run.simulation.sampleCount - 1) : -1;
+
+    // ---- Response panel ----
+    const responsePanel = layout.response;
+    const toResponseY = drawPanelGrid(context, layout, responsePanel, level.outputRange, Math.max(3, Math.round((responsePanel.bottom - responsePanel.top) / 42)), timeTicks);
+    context.save();
+    context.beginPath();
+    context.rect(left, responsePanel.top, plotWidth, responsePanel.bottom - responsePanel.top);
+    context.clip();
+
+    // Walls: hatched zone outside the channel
+    const { wallColumns, upperByColumn, lowerByColumn } = wallColumnsFor(Math.max(16, Math.round(plotWidth)));
+    const columnX = (column) => left + (column / wallColumns) * plotWidth;
+    context.fillStyle = getHatchPattern(context, chartPixelRatio);
+    context.beginPath();
+    context.moveTo(left, responsePanel.top - 2);
+    for (let column = 0; column < wallColumns; column++) {
+      const y = toResponseY(upperByColumn[column]);
+      context.lineTo(columnX(column), y);
+      context.lineTo(columnX(column + 1), y);
+    }
+    context.lineTo(right, responsePanel.top - 2);
+    context.closePath();
+    context.fill();
+    context.beginPath();
+    context.moveTo(left, responsePanel.bottom + 2);
+    for (let column = 0; column < wallColumns; column++) {
+      const y = toResponseY(lowerByColumn[column]);
+      context.lineTo(columnX(column), y);
+      context.lineTo(columnX(column + 1), y);
+    }
+    context.lineTo(right, responsePanel.bottom + 2);
+    context.closePath();
+    context.fill();
+    context.strokeStyle = palette['--wall-line'];
+    context.lineWidth = 1;
+    for (const byColumn of [upperByColumn, lowerByColumn]) {
+      context.beginPath();
+      for (let column = 0; column < wallColumns; column++) {
+        const y = toResponseY(byColumn[column]);
+        if (column === 0) context.moveTo(columnX(column), y); else context.lineTo(columnX(column), y);
+        context.lineTo(columnX(column + 1), y);
+      }
+      context.stroke();
+    }
+
+    // Disturbance markers
+    for (const event of state.envelope.events) {
+      if (event.kind !== 'disturbance' || !event.label) continue;
+      const x = Math.round(toX(event.startIndex * timeStep)) + 0.5;
+      context.strokeStyle = palette['--ink-faint'];
+      context.setLineDash([2, 3]);
+      context.beginPath();
+      context.moveTo(x, responsePanel.top);
+      context.lineTo(x, responsePanel.bottom);
+      context.stroke();
+      context.setLineDash([]);
+    }
+
+    // Settle deadlines
+    context.fillStyle = palette['--ink-faint'];
+    for (const deadline of state.envelope.settleDeadlines) {
+      const x = toX(deadline);
+      context.beginPath();
+      context.moveTo(x, responsePanel.bottom - 7);
+      context.lineTo(x - 4, responsePanel.bottom);
+      context.lineTo(x + 4, responsePanel.bottom);
+      context.closePath();
+      context.fill();
+    }
+
+    // Goal
+    const goalTraces = decimatedTraces(state.envelopeSource, ['goal'], columnCount);
+    context.strokeStyle = palette['--ink'];
+    context.lineWidth = 1.4;
+    context.setLineDash([5, 4]);
+    strokeDecimated(context, goalTraces.goal, toX, toResponseY, timeStep, Infinity);
+    context.setLineDash([]);
+
+    // Previous run (ghost)
+    if (state.previousRun) {
+      const ghost = decimatedTraces(state.previousRun.simulation, ['measured'], columnCount);
+      context.strokeStyle = palette['--ghost'];
+      context.lineWidth = 1.5;
+      strokeDecimated(context, ghost.measured, toX, toResponseY, timeStep, Infinity);
+    }
+
+    // Measured
+    if (run) {
+      const traces = decimatedTraces(run.simulation, ['measured'], columnCount);
+      context.strokeStyle = palette['--pen'];
+      context.lineWidth = 2;
+      context.lineJoin = 'round';
+      strokeDecimated(context, traces.measured, toX, toResponseY, timeStep, headIndex);
+
+      // Out-of-bounds stretches in red
+      const mask = run.evaluation.violationMask;
+      const measured = run.simulation.measured;
+      const stride = Math.max(1, Math.floor(run.simulation.sampleCount / columnCount));
+      context.strokeStyle = palette['--fail'];
+      context.lineWidth = 2.6;
+      context.beginPath();
+      let drawing = false;
+      for (let sampleIndex = 0; sampleIndex <= headIndex; sampleIndex += (mask[sampleIndex] ? 1 : stride)) {
+        if (mask[sampleIndex]) {
+          const x = toX(sampleIndex * timeStep);
+          const y = toResponseY(measured[sampleIndex]);
+          if (!drawing) { context.moveTo(x, y); drawing = true; } else context.lineTo(x, y);
+        } else drawing = false;
+      }
+      context.stroke();
+    }
+    context.restore();
+
+    // First violation marker (outside the clip so the ring is never cut)
+    if (run && run.evaluation.firstViolationIndex >= 0 && run.evaluation.firstViolationIndex <= headIndex) {
+      const violationIndex = run.evaluation.firstViolationIndex;
+      const x = toX(violationIndex * timeStep);
+      const y = Math.min(responsePanel.bottom, Math.max(responsePanel.top, toResponseY(run.simulation.measured[violationIndex])));
+      context.strokeStyle = palette['--fail'];
+      context.lineWidth = 2;
+      context.beginPath();
+      context.arc(x, y, 6, 0, Math.PI * 2);
+      context.stroke();
+    }
+
+    // Disturbance labels
+    context.font = `600 10px ${bodyFont}`;
+    context.textBaseline = 'middle';
+    for (const event of state.envelope.events) {
+      if (event.kind !== 'disturbance' || !event.label) continue;
+      const x = toX(event.startIndex * timeStep);
+      const labelWidth = context.measureText(event.label).width + 8;
+      const labelX = Math.min(right - labelWidth, Math.max(left, x - labelWidth / 2));
+      context.fillStyle = palette['--paper'];
+      context.fillRect(labelX, responsePanel.top + 3, labelWidth, 14);
+      context.strokeStyle = palette['--ink-faint'];
+      context.lineWidth = 1;
+      context.strokeRect(labelX + 0.5, responsePanel.top + 3.5, labelWidth - 1, 13);
+      context.fillStyle = palette['--ink-soft'];
+      context.textAlign = 'center';
+      context.fillText(event.label, labelX + labelWidth / 2, responsePanel.top + 10.5);
+    }
+
+    // Response panel title
+    context.font = `600 10.5px ${bodyFont}`;
+    context.textAlign = 'left';
+    context.textBaseline = 'alphabetic';
+    context.fillStyle = palette['--ink-soft'];
+    context.fillText(`${level.outputName.toUpperCase()} · ${level.outputUnit}`, left, CHART_MARGIN_TOP - 7);
+    const deadlines = state.envelope.settleDeadlines;
+    if (deadlines.length) {
+      context.textAlign = 'right';
+      context.fillStyle = palette['--ink-faint'];
+      context.font = `10px ${dataFont}`;
+      const lastDeadline = deadlines[deadlines.length - 1];
+      const deadlineText = Number.isInteger(Math.round(lastDeadline * 10) / 10) ? lastDeadline.toFixed(0) : lastDeadline.toFixed(1);
+      context.fillText(`▲ settle by ${deadlineText} s`, right, CHART_MARGIN_TOP - 7);
+    }
+
+    // ---- Controller panel ----
+    const controllerPanel = layout.controller;
+    const toControllerY = drawPanelGrid(context, layout, controllerPanel, level.termRange, Math.max(2, Math.round((controllerPanel.bottom - controllerPanel.top) / 38)), timeTicks);
+    context.save();
+    context.beginPath();
+    context.rect(left, controllerPanel.top, plotWidth, controllerPanel.bottom - controllerPanel.top);
+    context.clip();
+    context.strokeStyle = palette['--ink-soft'];
+    context.lineWidth = 1;
+    context.setLineDash([6, 4]);
+    for (const limit of [level.actuatorMinimum, level.actuatorMaximum]) {
+      const y = Math.round(toControllerY(limit)) + 0.5;
+      context.beginPath();
+      context.moveTo(left, y);
+      context.lineTo(right, y);
+      context.stroke();
+    }
+    context.setLineDash([]);
+    if (run) {
+      const keys = [];
+      for (const term of TERM_KEYS) if (level.unlocked[term] && state.visibleTerms[term]) keys.push(term);
+      const traceKey = { P: 'proportional', I: 'integral', D: 'derivative' };
+      const sourceKeys = keys.map((term) => traceKey[term]);
+      if (state.visibleTerms.S) sourceKeys.push('controllerSum');
+      const traces = decimatedTraces(run.simulation, sourceKeys, columnCount);
+      context.lineJoin = 'round';
+      // The sum goes underneath so each term stays readable on top of it.
+      if (state.visibleTerms.S) {
+        context.strokeStyle = palette['--ink'];
+        context.lineWidth = 2.2;
+        strokeDecimated(context, traces.controllerSum, toX, toControllerY, timeStep, headIndex);
+      }
+      for (const term of keys) {
+        context.strokeStyle = palette[TERM_TOKEN[term]];
+        context.lineWidth = 1.4;
+        strokeDecimated(context, traces[traceKey[term]], toX, toControllerY, timeStep, headIndex);
+      }
+    } else {
+      context.fillStyle = palette['--ink-faint'];
+      context.font = `12px ${bodyFont}`;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText('Controller terms appear here after a run', (left + right) / 2, (controllerPanel.top + controllerPanel.bottom) / 2);
+    }
+    context.restore();
+
+    // Actuator limit labels
+    context.font = `9.5px ${dataFont}`;
+    context.textAlign = 'right';
+    context.fillStyle = palette['--ink-soft'];
+    for (const [limit, offset] of [[level.actuatorMaximum, -4], [level.actuatorMinimum, 11]]) {
+      const y = toControllerY(limit) + offset;
+      if (y < controllerPanel.top + 8 || y > controllerPanel.bottom - 2) continue;
+      context.textBaseline = 'alphabetic';
+      context.fillText(withUnit(formatSignificant(limit).replace('-', '−'), level.actuatorUnit), right - 4, y);
+    }
+    context.font = `600 10.5px ${bodyFont}`;
+    context.textAlign = 'left';
+    context.textBaseline = 'alphabetic';
+    context.fillStyle = palette['--ink-soft'];
+    context.fillText(`CONTROLLER · ${level.actuatorName.toUpperCase()} · ${level.actuatorUnit}`, left, controllerPanel.top - 6);
+
+    // ---- Time axis ----
+    context.font = `10px ${dataFont}`;
+    context.fillStyle = palette['--ink-faint'];
+    context.textAlign = 'center';
+    context.textBaseline = 'top';
+    for (const time of xTicks.ticks) {
+      const x = toX(time);
+      const isLast = time + xTicks.step > duration + 1e-9;
+      const text = formatTick(time, xTicks.step) + (isLast ? ' s' : '');
+      context.textAlign = isLast ? 'right' : time === 0 ? 'left' : 'center';
+      context.fillText(text, isLast ? Math.min(right, x + 8) : x, layout.bottom + 5);
+    }
+
+    // ---- Pen head / cursor ----
+    const markerIndex = animating ? headIndex : state.cursorIndex;
+    if (run && markerIndex !== null && markerIndex >= 0) {
+      const x = Math.round(toX(markerIndex * timeStep)) + 0.5;
+      context.strokeStyle = palette['--ink-soft'];
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(x, responsePanel.top);
+      context.lineTo(x, controllerPanel.bottom);
+      context.stroke();
+      const dot = (y, color, radius) => {
+        context.fillStyle = color;
+        context.beginPath();
+        context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fill();
+        context.strokeStyle = palette['--paper'];
+        context.lineWidth = 1.5;
+        context.stroke();
+      };
+      const clampY = (y, panel) => Math.min(panel.bottom, Math.max(panel.top, y));
+      dot(clampY(toResponseY(run.simulation.goal[markerIndex]), responsePanel), palette['--ink'], 3);
+      dot(clampY(toResponseY(run.simulation.measured[markerIndex]), responsePanel), palette['--pen'], 4.5);
+      const traceKey = { P: 'proportional', I: 'integral', D: 'derivative' };
+      for (const term of TERM_KEYS) {
+        if (!level.unlocked[term] || !state.visibleTerms[term]) continue;
+        dot(clampY(toControllerY(run.simulation[traceKey[term]][markerIndex]), controllerPanel), palette[TERM_TOKEN[term]], 3);
+      }
+      if (state.visibleTerms.S) dot(clampY(toControllerY(run.simulation.controllerSum[markerIndex]), controllerPanel), palette['--ink'], 3.5);
+    }
+
+    // Frame borders around the two panels
+    context.strokeStyle = palette['--grid-major'];
+    context.lineWidth = 1;
+    context.strokeRect(left + 0.5, responsePanel.top + 0.5, plotWidth - 1, responsePanel.bottom - responsePanel.top - 1);
+    context.strokeRect(left + 0.5, controllerPanel.top + 0.5, plotWidth - 1, controllerPanel.bottom - controllerPanel.top - 1);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Readout above the chart
+  // ---------------------------------------------------------------------------
+  function updateReadout() {
+    const level = currentLevel();
+    const run = state.run;
+    const index = state.animation ? state.animation.headIndex : state.cursorIndex;
+    if (!run) {
+      readout.innerHTML = `<div class="line hint">Set the gains, then Run. The measured trace must stay out of the hatched zone.</div>`;
+      return;
+    }
+    if (index === null || index < 0) {
+      readout.innerHTML = `<div class="line hint">Drag across the chart to read every trace at any moment.</div>`;
+      return;
+    }
+    const simulation = run.simulation;
+    const parts = [];
+    for (const term of TERM_KEYS) {
+      if (!level.unlocked[term]) continue;
+      const value = term === 'P' ? simulation.proportional[index] : term === 'I' ? simulation.integral[index] : simulation.derivative[index];
+      parts.push(`<span class="key-${term.toLowerCase()}">${term} <b>${formatSignedTerm(value)}</b></span>`);
+    }
+    parts.push(`<span class="key-sum">Σ <b>${formatSignedTerm(simulation.controllerSum[index])}</b> ${escapeHtml(level.actuatorUnit)}</span>`);
+    readout.innerHTML =
+      `<div class="line"><span>t <b>${simulation.time[index].toFixed(level.durationSeconds >= 20 ? 1 : 2)} s</b></span>` +
+      `<span>Goal <b>${escapeHtml(formatOutput(level, simulation.goal[index]))}</b></span>` +
+      `<span class="key-pen">Measured <b>${escapeHtml(formatOutput(level, simulation.measured[index]))}</b></span></div>` +
+      `<div class="line">${parts.join('')}</div>`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gain faders
+  // ---------------------------------------------------------------------------
+  const faders = {};
+  function decadeTicks(range) {
+    const ticks = [{ position: 0, label: '0' }];
+    for (let exponent = Math.ceil(Math.log10(range.min) - 1e-9); Math.pow(10, exponent) <= range.max * (1 + 1e-9); exponent++) {
+      const value = Math.pow(10, exponent);
+      const position = sliderPositionFromGain(value, range);
+      if (position < 60) continue;
+      const label = value >= 1000 ? `${value / 1000}k` : String(Number(value.toPrecision(1)));
+      ticks.push({ position, label });
+    }
+    return ticks;
+  }
+  function buildGainRows() {
+    const level = currentLevel();
+    gainRowsContainer.innerHTML = '';
+    for (const term of TERM_KEYS) {
+      const unlocked = level.unlocked[term];
+      const row = document.createElement('div');
+      row.className = `gain-row${unlocked ? '' : ' locked'}`;
+      row.style.setProperty('--term', `var(${TERM_TOKEN[term]})`);
+      const lockedMessage = FIRST_LEVEL_WITH_TERM[term] > state.levelIndex
+        ? `Unlocks at level ${FIRST_LEVEL_WITH_TERM[term] + 1}` : 'Off for this level';
+      const ticksHtml = decadeTicks(level.gains[term])
+        .map((tick) => `<span style="left:${(tick.position / SLIDER_STEPS) * 100}%">${tick.label}</span>`).join('');
+      row.innerHTML = `
+        <div class="gain-row-head">
+          <span class="term-badge">${term}</span>
+          <span class="term-name">${TERM_NAMES[term]}</span>
+          <span class="term-unit">${escapeHtml(gainUnit(level, term))}</span>
+          <span class="term-value" data-role="value">${unlocked ? '' : lockedMessage}</span>
+        </div>
+        <div class="gain-track">
+          <button class="nudge" type="button" data-step="-1" aria-label="Lower ${term}" ${unlocked ? '' : 'disabled'}>−</button>
+          <div class="fader-wrap">
+            <input class="fader" type="range" id="fader-${term}" min="0" max="${SLIDER_STEPS}" step="1"
+              aria-label="${TERM_NAMES[term]} gain" ${unlocked ? '' : 'disabled'}>
+            <div class="fader-scale" aria-hidden="true">${ticksHtml}</div>
+          </div>
+          <button class="nudge" type="button" data-step="1" aria-label="Raise ${term}" ${unlocked ? '' : 'disabled'}>+</button>
+        </div>`;
+      gainRowsContainer.appendChild(row);
+      const input = row.querySelector('input');
+      const valueLabel = row.querySelector('[data-role="value"]');
+      faders[term] = { row, input, valueLabel, unlocked };
+      input.value = String(state.sliderPositions[term]);
+      input.addEventListener('input', () => setSliderPosition(term, Number(input.value)));
+      for (const nudgeButton of row.querySelectorAll('.nudge')) attachNudge(nudgeButton, term, Number(nudgeButton.dataset.step));
+      refreshFader(term);
+    }
+    for (const chip of document.querySelectorAll('.chip')) {
+      const term = chip.dataset.term;
+      chip.hidden = term !== 'S' && !level.unlocked[term];
+      chip.setAttribute('aria-pressed', String(state.visibleTerms[term]));
+    }
+  }
+  function refreshFader(term) {
+    const level = currentLevel();
+    const fader = faders[term];
+    if (!fader) return;
+    const position = state.sliderPositions[term];
+    fader.input.value = String(position);
+    fader.input.style.setProperty('--fill', `${(position / SLIDER_STEPS) * 100}%`);
+    if (fader.unlocked) {
+      const gain = gainFromSliderPosition(position, level.gains[term]);
+      fader.valueLabel.textContent = formatGain(gain);
+      fader.valueLabel.classList.toggle('off', gain === 0);
+      fader.input.setAttribute('aria-valuetext', `${formatGain(gain)} ${gainUnit(level, term)}`);
+    }
+  }
+  let saveTimer = 0;
+  function setSliderPosition(term, position) {
+    const clamped = Math.max(0, Math.min(SLIDER_STEPS, Math.round(position)));
+    state.sliderPositions[term] = clamped;
+    refreshFader(term);
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      progress.sliderPositions[currentLevel().id] = Object.assign({}, state.sliderPositions);
+      saveProgress();
+    }, 250);
+  }
+  function attachNudge(button, term, direction) {
+    let repeatTimeout = 0, repeatInterval = 0;
+    const step = () => setSliderPosition(term, state.sliderPositions[term] + direction * NUDGE_STEP_POSITIONS);
+    const stop = () => { clearTimeout(repeatTimeout); clearInterval(repeatInterval); };
+    button.addEventListener('pointerdown', (event) => {
+      if (button.disabled) return;
+      event.preventDefault();
+      step();
+      stop();
+      repeatTimeout = setTimeout(() => { repeatInterval = setInterval(step, NUDGE_REPEAT_INTERVAL_MILLISECONDS); }, NUDGE_REPEAT_DELAY_MILLISECONDS);
+    });
+    for (const type of ['pointerup', 'pointerleave', 'pointercancel']) button.addEventListener(type, stop);
+    button.addEventListener('click', (event) => { if (event.detail === 0) step(); });
+  }
+  function currentGains() {
+    const level = currentLevel();
+    const gains = {};
+    for (const term of TERM_KEYS) {
+      gains[term] = level.unlocked[term] ? gainFromSliderPosition(state.sliderPositions[term], level.gains[term]) : 0;
+    }
+    return gains;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Running the plant
+  // ---------------------------------------------------------------------------
+  function setRunButton(running) {
+    runButton.classList.toggle('running', running);
+    runButton.querySelector('span').textContent = running ? 'Skip' : 'Run';
+    runButton.querySelector('svg').style.display = running ? 'none' : '';
+  }
+  function updateAttempts() {
+    attemptsLabel.textContent = state.attempts === 1 ? '1 run' : `${state.attempts} runs`;
+  }
+  function startRun() {
+    if (state.animation) { finishRun(); return; }
+    hideResult();
+    const level = currentLevel();
+    const gains = currentGains();
+    const simulation = simulate(level, gains);
+    const evaluation = evaluateRun(level, simulation, state.envelope);
+    const diagnosis = diagnoseRun(level, simulation, state.envelope, evaluation, gains);
+    const score = scoreStars(level, evaluation);
+    if (state.run) state.previousRun = state.run;
+    state.run = { gains, simulation, evaluation, diagnosis, score };
+    state.cursorIndex = null;
+    state.attempts += 1;
+    progress.attempts[level.id] = state.attempts;
+    updateAttempts();
+    if (prefersReducedMotion.matches) { finishRun(); return; }
+    state.animation = { startTimestamp: null, headIndex: 0 };
+    setRunButton(true);
+    requestAnimationFrame(stepAnimation);
+  }
+  function stepAnimation(timestamp) {
+    const animation = state.animation;
+    if (!animation) return;
+    if (animation.startTimestamp === null) animation.startTimestamp = timestamp;
+    const fraction = Math.min(1, (timestamp - animation.startTimestamp) / RUN_ANIMATION_MILLISECONDS);
+    const sampleCount = state.run.simulation.sampleCount;
+    animation.headIndex = Math.round(fraction * (sampleCount - 1));
+    drawChart();
+    updateReadout();
+    if (fraction < 1) requestAnimationFrame(stepAnimation);
+    else finishRun();
+  }
+  let resultTimer = 0;
+  function finishRun() {
+    state.animation = null;
+    setRunButton(false);
+    drawChart();
+    updateReadout();
+    const level = currentLevel();
+    const stars = state.run.score.stars;
+    const previousBest = progress.bestStars[level.id] || 0;
+    if (stars > previousBest) progress.bestStars[level.id] = stars;
+    progress.sliderPositions[level.id] = Object.assign({}, state.sliderPositions);
+    saveProgress();
+    renderBestStars();
+    clearTimeout(resultTimer);
+    resultTimer = setTimeout(showResult, prefersReducedMotion.matches ? 0 : RESULT_DELAY_MILLISECONDS);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Result sheet
+  // ---------------------------------------------------------------------------
+  function starHint(level, criterion, gains) {
+    const has = (term) => level.unlocked[term];
+    switch (criterion.metric) {
+      case 'iae':
+        return has('D') ? 'Track closer with more P, adding D if it starts to swing.' : 'Track closer with a little more P.';
+      case 'overshoot':
+        if (has('D')) return `Shave the overshoot with a bit more D${gains.I > 0 ? ', or a bit less I' : ', or a bit less P'}.`;
+        return gains.I > 0 ? 'Shave the overshoot with a little less P or I.' : 'Shave the overshoot with a little less P.';
+      case 'settle':
+        return has('I') ? 'Settle sooner: a bit more I, or more P if it stays calm.' : 'Settle sooner with a little more P.';
+      case 'travel':
+        return 'Smooth the actuator: less D or less P makes fewer, gentler moves.';
+      case 'rms':
+        return 'Calm the motor: less D, since D turns sensor noise into chatter.';
+      default:
+        return '';
+    }
+  }
+  function showResult() {
+    const level = currentLevel();
+    const run = state.run;
+    if (!run) return;
+    const { evaluation, diagnosis, score, gains } = run;
+    const passed = evaluation.passed;
+    resultSheet.dataset.state = passed ? 'pass' : 'fail';
+    byId('result-verdict').textContent = passed ? 'Pass' : 'Missed';
+    byId('result-title').textContent = passed ? ['', 'Passed', 'Nicely tuned', 'Dialed in'][score.stars] : diagnosis.title;
+    byId('result-stars').innerHTML = starString(score.stars);
+    byId('result-stars').setAttribute('aria-label', `${score.stars} of 3 stars`);
+    byId('result-detail').textContent = diagnosis.detail;
+    let hint = diagnosis.suggestion || '';
+    if (passed) {
+      const unmet = score.criteria.find((criterion) => !criterion.met);
+      hint = unmet ? `For another star: ${starHint(level, unmet, gains).replace(/^./, (letter) => letter.toLowerCase())}` : 'All three stars.';
+    }
+    byId('result-hint').textContent = hint;
+    const failTime = evaluation.firstViolationIndex >= 0 ? run.simulation.time[evaluation.firstViolationIndex] : null;
+    const items = [`<li class="${passed ? 'met' : ''}"><span class="mark">${passed ? '★' : '☆'}</span><span>Stay in the channel and settle</span><span class="value">${passed ? 'done' : `out at ${failTime.toFixed(failTime >= 10 ? 1 : 2)} s`}</span></li>`];
+
+    for (const criterion of score.criteria) {
+      items.push(`<li class="${criterion.met ? 'met' : ''}"><span class="mark">${criterion.met ? '★' : '☆'}</span><span>${escapeHtml(criterionText(level, criterion))}</span><span class="value">${escapeHtml(formatMetric(level, criterion.metric, criterion.value))}</span></li>`);
+    }
+    byId('result-criteria').innerHTML = items.join('');
+    const nextButton = byId('next-level');
+    const actions = byId('result-actions');
+    const hasNext = state.levelIndex < LEVELS.length - 1;
+    nextButton.hidden = !passed;
+    nextButton.textContent = hasNext ? 'Next level' : 'All levels';
+    actions.classList.toggle('single', !passed);
+    resultSheet.hidden = false;
+  }
+  function hideResult() {
+    clearTimeout(resultTimer);
+    resultSheet.hidden = true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scrubbing the chart
+  // ---------------------------------------------------------------------------
+  let scrubbing = false;
+  function cursorFromEvent(event) {
+    if (!state.run || state.animation) return;
+    const rectangle = chartCanvas.getBoundingClientRect();
+    const layout = chartLayout();
+    const x = event.clientX - rectangle.left;
+    const fraction = (x - layout.left) / (layout.right - layout.left);
+    const level = currentLevel();
+    const index = Math.round(Math.max(0, Math.min(1, fraction)) * level.durationSeconds / level.timeStepSeconds);
+    state.cursorIndex = Math.min(state.run.simulation.sampleCount - 1, index);
+    drawChart();
+    updateReadout();
+  }
+  chartCanvas.addEventListener('pointerdown', (event) => {
+    if (!state.run || state.animation) return;
+    scrubbing = true;
+    try { chartCanvas.setPointerCapture(event.pointerId); } catch (error) { /* ignore */ }
+    cursorFromEvent(event);
+  });
+  chartCanvas.addEventListener('pointermove', (event) => {
+    if (scrubbing || event.pointerType === 'mouse') cursorFromEvent(event);
+  });
+  for (const type of ['pointerup', 'pointercancel']) chartCanvas.addEventListener(type, () => { scrubbing = false; });
+
+  // ---------------------------------------------------------------------------
+  // Brief overlay
+  // ---------------------------------------------------------------------------
+  function openBrief() {
+    const level = currentLevel();
+    const chapter = CHAPTERS[level.chapter];
+    byId('brief-eyebrow').textContent = `Level ${level.number} · ${chapter.name}`;
+    byId('brief-title').textContent = level.name;
+    byId('brief-story').textContent = level.story;
+    const newTerm = TERM_KEYS.find((term) => FIRST_LEVEL_WITH_TERM[term] === state.levelIndex);
+    const badge = byId('brief-badge');
+    if (newTerm) {
+      badge.textContent = `NEW: ${newTerm}`;
+      badge.style.setProperty('--term', `var(${TERM_TOKEN[newTerm]})`);
+    } else {
+      badge.textContent = 'TIP';
+      badge.style.setProperty('--term', 'var(--ink)');
+    }
+    byId('brief-tip').textContent = level.tip;
+    const { lagSeconds, looseBand, tightBand, funnelSeconds } = level.envelope;
+    const unit = level.outputUnit;
+    const band = (value) => withUnit(String(value), unit);
+    const goalEvents = state.envelope.events.filter((event) => event.kind === 'goal');
+    const disturbances = state.envelope.events.filter((event) => event.kind === 'disturbance' && event.label && event.label !== 'Release');
+    const deadlines = state.envelope.settleDeadlines;
+    const lastDeadline = deadlines.length ? deadlines[deadlines.length - 1] : 0;
+    const roundedDeadline = Math.round(lastDeadline * 10) / 10;
+    const settleText = goalEvents.length === 1 && deadlines.length
+      ? `within ±${band(tightBand)} by ${Number.isInteger(roundedDeadline) ? roundedDeadline.toFixed(0) : roundedDeadline.toFixed(1)} s`
+      : `within ±${band(tightBand)}, ${lagSeconds + funnelSeconds} s after each change`;
+    const actuatorParts = [`${withUnit(`${formatSignificant(level.actuatorMinimum).replace('-', '−')} to ${formatSignificant(level.actuatorMaximum)}`, level.actuatorUnit)}`];
+    if (level.actuatorSlewPerSecond) actuatorParts.push(`moves at most ${level.actuatorSlewPerSecond} ${level.actuatorUnit}/s`);
+    if (level.deadTimeSeconds) actuatorParts.push(`${level.deadTimeSeconds} s delay`);
+    const disturbanceText = disturbances.length
+      ? [...new Set(disturbances.map((event) => event.label))].map((label) => {
+        const times = disturbances.filter((event) => event.label === label).map((event) => `${formatTick(event.startIndex * level.timeStepSeconds, 0.1)} s`);
+        return `${label} at ${times.join(' and ')}`;
+      }).join(' · ')
+      : '';
+    const specRows = [
+      ['Arrive', `within ${lagSeconds} s of each change, overshooting by ${band(looseBand)} at most`],
+      ['Settle', settleText],
+      ['Actuator', `${level.actuatorName}: ${actuatorParts.join(', ')}`],
+    ];
+    if (disturbanceText) specRows.push(['Events', `${disturbanceText}. The channel reopens, then narrows again.`]);
+    specRows.push(['Plant', `<span class="mono">${escapeHtml(level.transferFunction)}</span>`]);
+    byId('brief-spec').innerHTML = specRows.map(([label, value]) =>
+      `<div><dt>${label}</dt><dd>${label === 'Plant' ? value : escapeHtml(value)}</dd></div>`).join('');
+    const starRows = [['★', 'Stay in the channel and settle']].concat(level.starCriteria.map((criterion, index) =>
+      [index === 0 ? '★★' : '★★★', criterionText(level, criterion)]));
+    byId('brief-stars').innerHTML = starRows.map(([stars, text]) => `<li><span class="s">${stars}</span><span>${escapeHtml(text)}</span></li>`).join('');
+    byId('brief-note').innerHTML = `<b>Field note.</b> ${escapeHtml(level.fieldNote)}`;
+    briefOverlay.hidden = false;
+    byId('brief-start').focus({ preventScroll: true });
+  }
+  function closeBrief() {
+    briefOverlay.hidden = true;
+    resizeChart();
+  }
+  byId('brief-start').addEventListener('click', closeBrief);
+  briefOverlay.addEventListener('click', (event) => { if (event.target === briefOverlay) closeBrief(); });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !briefOverlay.hidden) closeBrief();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Level select
+  // ---------------------------------------------------------------------------
+  function totalStars() { return LEVELS.reduce((sum, level) => sum + (progress.bestStars[level.id] || 0), 0); }
+  function renderStarTotal() {
+    starTotal.innerHTML = `<b>★ ${totalStars()}</b> / ${LEVELS.length * 3}`;
+  }
+  const miniCharts = [];
+  function renderLevelList() {
+    chapterList.innerHTML = '';
+    miniCharts.length = 0;
+    CHAPTERS.forEach((chapter, chapterIndex) => {
+      const section = document.createElement('section');
+      section.className = 'chapter';
+      section.innerHTML = `<div class="chapter-head"><h2>${escapeHtml(chapter.name)}</h2><p>${escapeHtml(chapter.summary)}</p></div><ul class="level-list"></ul>`;
+      const list = section.querySelector('ul');
+      LEVELS.forEach((level, levelIndex) => {
+        if (level.chapter !== chapterIndex) return;
+        const best = progress.bestStars[level.id] || 0;
+        const item = document.createElement('li');
+        item.innerHTML = `
+          <button class="level-row" type="button" data-stars="${best}" aria-label="Level ${level.number}, ${escapeHtml(level.name)}, ${best} of 3 stars">
+            <span class="numeral">${twoDigits(level.number)}</span>
+            <span class="level-text"><span class="level-name">${escapeHtml(level.name)}</span><span class="level-tag">${escapeHtml(level.tag)}</span></span>
+            <span class="level-side"><canvas width="88" height="30" aria-hidden="true"></canvas><span class="mini-stars">${starString(best)}</span></span>
+          </button>`;
+        item.querySelector('button').addEventListener('click', () => openLevel(levelIndex, true));
+        list.appendChild(item);
+        miniCharts.push({ canvas: item.querySelector('canvas'), level, best });
+      });
+      chapterList.appendChild(section);
+    });
+    renderStarTotal();
+    drawMiniCharts();
+  }
+  const miniChartCache = new Map();
+  function drawMiniCharts() {
+    const pixelRatio = Math.min(3, window.devicePixelRatio || 1);
+    for (const { canvas, level, best } of miniCharts) {
+      const width = 88, height = 30;
+      canvas.width = width * pixelRatio;
+      canvas.height = height * pixelRatio;
+      const context = canvas.getContext('2d');
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      let sampled = miniChartCache.get(level.id);
+      if (!sampled) {
+        sampled = buildGoalAndEnvelope(level, level.durationSeconds / (MINI_CHART_SAMPLES - 1));
+        miniChartCache.set(level.id, sampled);
+      }
+      const { time, goal, envelope } = sampled;
+      const [minimum, maximum] = level.outputRange;
+      const toX = (index) => 1 + (time[index] / level.durationSeconds) * (width - 2);
+      const toY = (value) => height - 2 - (value - minimum) / (maximum - minimum) * (height - 4);
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = palette['--grid-major'];
+      context.globalAlpha = 0.7;
+      context.beginPath();
+      for (let index = 0; index < time.length; index++) context.lineTo(toX(index), toY(Math.min(maximum, envelope.upper[index])));
+      for (let index = time.length - 1; index >= 0; index--) context.lineTo(toX(index), toY(Math.max(minimum, envelope.lower[index])));
+      context.closePath();
+      context.fill();
+      context.globalAlpha = 1;
+      context.strokeStyle = best === 3 ? palette['--pass'] : best > 0 ? palette['--pen'] : palette['--ink-soft'];
+      context.lineWidth = 1.5;
+      context.beginPath();
+      for (let index = 0; index < time.length; index++) {
+        if (index === 0) context.moveTo(toX(index), toY(goal[index])); else context.lineTo(toX(index), toY(goal[index]));
+      }
+      context.stroke();
+    }
+  }
+  byId('reset-progress').addEventListener('click', () => {
+    const button = byId('reset-progress');
+    if (button.dataset.confirm !== 'yes') {
+      button.dataset.confirm = 'yes';
+      button.textContent = 'Tap again to erase all stars';
+      setTimeout(() => { button.dataset.confirm = ''; button.textContent = 'Reset progress'; }, 4000);
+      return;
+    }
+    progress.bestStars = {};
+    progress.sliderPositions = {};
+    progress.attempts = {};
+    saveProgress();
+    button.dataset.confirm = '';
+    button.textContent = 'Reset progress';
+    renderLevelList();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Screens
+  // ---------------------------------------------------------------------------
+  function renderBestStars() {
+    const best = progress.bestStars[currentLevel().id] || 0;
+    const element = byId('play-best');
+    element.innerHTML = starString(best);
+    element.setAttribute('aria-label', `Best: ${best} of 3 stars`);
+  }
+  function openLevel(levelIndex, showBrief) {
+    if (state.animation) state.animation = null;
+    setRunButton(false);
+    hideResult();
+    state.levelIndex = levelIndex;
+    const level = currentLevel();
+    const saved = progress.sliderPositions[level.id];
+    for (const term of TERM_KEYS) {
+      const fallback = sliderPositionFromGain(level.gains[term].start, level.gains[term]);
+      state.sliderPositions[term] = level.unlocked[term] ? (saved && Number.isFinite(saved[term]) ? saved[term] : fallback) : 0;
+    }
+    const sampled = buildGoalAndEnvelope(level);
+    state.envelope = sampled.envelope;
+    state.envelopeSource = { sampleCount: sampled.time.length, goal: sampled.goal, lower: sampled.envelope.lower, upper: sampled.envelope.upper };
+    state.run = null;
+    state.previousRun = null;
+    state.cursorIndex = null;
+    state.attempts = progress.attempts[level.id] || 0;
+    byId('play-numeral').textContent = twoDigits(level.number);
+    byId('play-name').textContent = level.name;
+    renderBestStars();
+    buildGainRows();
+    updateAttempts();
+    state.screen = 'play';
+    levelsScreen.hidden = true;
+    playScreen.hidden = false;
+    updateReadout();
+    resizeChart();
+    if (showBrief) openBrief();
+  }
+  function showLevels() {
+    if (state.animation) state.animation = null;
+    hideResult();
+    state.screen = 'levels';
+    playScreen.hidden = true;
+    levelsScreen.hidden = false;
+    renderLevelList();
+  }
+
+  byId('back-button').addEventListener('click', showLevels);
+  byId('brief-button').addEventListener('click', openBrief);
+  runButton.addEventListener('click', startRun);
+  byId('tune-again').addEventListener('click', () => { hideResult(); });
+  byId('next-level').addEventListener('click', () => {
+    if (state.levelIndex < LEVELS.length - 1) openLevel(state.levelIndex + 1, true);
+    else showLevels();
+  });
+  for (const chip of document.querySelectorAll('.chip')) {
+    chip.addEventListener('click', () => {
+      const term = chip.dataset.term;
+      state.visibleTerms[term] = !state.visibleTerms[term];
+      chip.setAttribute('aria-pressed', String(state.visibleTerms[term]));
+      drawChart();
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Theme and size changes
+  // ---------------------------------------------------------------------------
+  function handleThemeChange() {
+    refreshPalette();
+    drawChart();
+    if (state.screen === 'levels') drawMiniCharts();
+  }
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', handleThemeChange);
+  new MutationObserver(handleThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => resizeChart()).observe(chartFrame);
+  window.addEventListener('resize', resizeChart);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawChart(); }).catch(() => {});
+
+  // ---------------------------------------------------------------------------
+  // Boot (restores the open level if the page is updated while open)
+  // ---------------------------------------------------------------------------
+  function start(restored) {
+    refreshPalette();
+    const data = restored || {};
+    if (data.screen === 'play' && Number.isInteger(data.levelIndex) && LEVELS[data.levelIndex]) {
+      if (data.sliderPositions) progress.sliderPositions[LEVELS[data.levelIndex].id] = data.sliderPositions;
+      renderLevelList();
+      openLevel(data.levelIndex, false);
+    } else {
+      renderLevelList();
+    }
+  }
+  if (window.claude && window.claude.hot && typeof window.claude.hot.snapshot === 'function') {
+    window.claude.hot.snapshot(() => ({ screen: state.screen, levelIndex: state.levelIndex, sliderPositions: Object.assign({}, state.sliderPositions) }));
+  }
+  if (window.claude && window.claude.hot && typeof window.claude.hot.ready === 'function') window.claude.hot.ready(start);
+  else start((window.claude && window.claude.hot && window.claude.hot.data) || {});
+})();
+
+</script>
+</body>
+</html>
