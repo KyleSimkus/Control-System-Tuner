@@ -1,5 +1,10 @@
 # Control System Tuner
 
+By Claude Opus 5.5. Gameplay designed with this 1 prompt:
+"Mobile game idea: Control System Tuner.  Category: STEM games.  3 sliders: P, I, D.  Graph shows P, I, D, P+I+D, goal (input), measured (output). To pass level, meas must stay within envelope around goal and settle near goal within a time limit.  Goal can be step, ramp, s-curve, multiple steps, etc."
+
+Resisting the temptation to improve this because I want to show how far Claude got with 1 short prompt, and then some more prompts to get it on GitHub.
+
 A browser game about tuning PID controllers. Set P, I and D, press Run, and keep the measured response inside the spec channel until it settles.
 
 **[Play it in your browser](https://kylesimkus.github.io/Control-System-Tuner/ControlSystemTuner.html)** (works on phones too)
